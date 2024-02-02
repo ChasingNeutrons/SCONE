@@ -15,6 +15,7 @@ module surfaceFactory_func
   use box_class,            only : box
   use squareCylinder_class, only : squareCylinder
   use truncCylinder_class,  only : truncCylinder
+  use fractal_class,        only : fractal
 
   implicit none
   private
@@ -30,6 +31,7 @@ module surfaceFactory_func
                                                                       'zCylinder      ',&
                                                                       'sphere         ',&
                                                                       'box            ',&
+                                                                      'fractal        ',&
                                                                       'xSquareCylinder',&
                                                                       'ySquareCylinder',&
                                                                       'zSquareCylinder',&
@@ -81,6 +83,9 @@ contains
 
       case ('box')
         allocate (box :: new)
+
+      case ('fractal')
+        allocate (fractal :: new)
 
       case ('xSquareCylinder', 'ySquareCylinder', 'zSquareCylinder')
         allocate (squareCylinder :: new)

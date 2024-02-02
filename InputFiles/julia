@@ -1,0 +1,121 @@
+!
+! Box of water for slowing down demonstrations
+!
+type eigenPhysicsPackage;
+
+pop      100000;
+active   500;
+inactive 20;
+XSdata   ceData;
+dataType ce;
+seed 3;
+outputFile julia;
+
+collisionOperator { neutronCE {type neutronCEstd;}
+                  }
+
+transportOperator { type transportOperatorDT;
+                  }
+
+inactiveTally {
+              }
+
+activeTally  {
+                !norm totalFlx;
+                !normVal 1.0;
+                !totalFlx {type collisionClerk; response (flx); flx {type fluxResponse;} }
+                flx {type collisionClerk; response (flx); 
+                          flx {type fluxResponse;}
+                          map {type multiMap;
+                               maps (xax yax ene);
+                               xax { type spaceMap; axis x; grid lin; min -25; max 25; N 500;}
+                               yax { type spaceMap; axis y; grid lin; min -25; max 25; N 500;}
+                               ene {type energyMap; grid unstruct; bins (1.0E-9 1.0E-6 20.0);}
+                          }
+               }
+        }
+
+geometry {
+    type geometryStd;
+    boundary (1 1 1 1 1 1);
+    graph {type shrunk;}
+
+    surfaces
+    {
+      squareBound { id 1; type box; origin ( 0.0  0.0  0.0); halfwidth (25 25 10.0); }
+      !frac { id 2; type fractal; origin (0.0 0.0 0.0); c (-0.4 0.6); it 20; limit 4.0;}
+      frac { id 2; type fractal; origin (0.0 0.0 0.0); c (0.35 0.35); it 1000; limit 5.0; tol 1.0E-2; scale 0.05;}
+    }
+
+
+    cells
+    {
+      !inside { id 1; type simpleCell; surface (-1); filltype uni; universe 2; }
+      !outside { id 2; type simpleCell; surface}
+      fuel { type simpleCell; id 3; surfaces (-2); filltype mat; material fuel;}
+      coolant { type simpleCell; id 4; surfaces (2); filltype mat; material coolant;}
+    }
+
+    universes
+    {
+      root
+      {
+          id 1;
+          type rootUniverse;
+          border 1;
+          fill u<2>;
+      }
+
+      everything { id 2; type cellUniverse; cells (3 4); }
+
+    }
+}
+
+viz {
+  bmp {
+    type bmp;
+    output img;
+    what material;
+    centre (0.0 0.0 0.0);
+    //width (25.0 25.0);
+    axis z;
+    res (2000 2000);
+  }
+}
+
+nuclearData {
+
+  handles {
+     ceData { type aceNeutronDatabase; aceLibrary $SCONE_ACE;}
+  }
+
+
+materials {
+
+    coolant {
+      temp       273;
+      composition {
+      1001.03    6.67572E-002;
+      8016.03    3.33786E-002;
+      }
+      moder { 1001.03 lwj3.00; }
+    }
+
+    fuel {
+      temp 273;
+      composition {
+      !92235.03 xxx
+      !92238.03 xxx
+      !8016.03  xxx
+      92235.03  5.67505E-4;
+      92238.03  2.22265E-002;
+       8016.03  4.55881E-002; 
+      }
+    }
+
+}
+
+}
+
+
+

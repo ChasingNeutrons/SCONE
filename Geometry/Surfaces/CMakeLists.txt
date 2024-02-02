@@ -5,6 +5,7 @@ add_sources(./surface_inter.f90
             ./QuadSurfaces/aPlane_class.f90
             ./QuadSurfaces/plane_class.f90
             ./box_class.f90
+            ./fractal_class.f90
             ./squareCylinder_class.f90
             ./truncCylinder_class.f90
             ./surfaceFactory_func.f90
