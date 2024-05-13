@@ -64,6 +64,7 @@ module dataRR_class
     procedure :: getPointers
     !procedure :: getAllPointers
     procedure :: getTotalPointer
+    procedure :: getNuFissPointer
     procedure :: getTotalXS
     procedure :: getScatterXS
     procedure :: getNumPrec
@@ -238,6 +239,21 @@ contains
     sigT   => self % sigmaT(idx1:idx2)
 
   end subroutine getTotalPointer
+  
+  !!
+  !! Return pointers to only the nuFission XS
+  !! This is done for a given material, across all energies
+  !!
+  subroutine getNuFissPointer(self, matIdx, nuFiss)
+    class(dataRR), intent(inout)                       :: self
+    integer(shortInt), intent(in)                      :: matIdx
+    real(defFlt), dimension(:), pointer, intent(inout) :: nuFiss
+
+    call self % getIdxs(matIdx, idx1, idx2)
+    sigT   => self % nuFission(idx1:idx2)
+
+  end subroutine getNuFissPointer
+
 
   !!
   !! Return total XS in a given material and group

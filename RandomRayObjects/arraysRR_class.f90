@@ -96,6 +96,19 @@ module arraysRR_class
   contains
     
     procedure :: init
+    procedure :: initialiseFixedSource
+    procedure :: getSourcePointer
+    procedure :: getFluxPointer
+    procedure :: incrementVolume
+    procedure :: hasHit
+    procedure :: hitCell
+    procedure :: cellHitRate
+    procedure :: wipeCellHits
+    procedure :: found
+    procedure :: newFound
+    procedure :: getNG
+    procedure :: setLock
+    procedure :: unsetLock
     procedure :: resetFluxes
     procedure :: resetFluxesFlatIso
     procedure :: resetFluxesLinearIso
@@ -114,7 +127,7 @@ module arraysRR_class
     procedure :: accumulateFluxScores
     procedure :: finaliseFluxAndKeffScores
     procedure :: calculateKeff
-    procedure :: getFluxPointer
+    procedure :: calculateKeffKernel
     procedure :: kill
 
     ! Private procedures
@@ -130,19 +143,16 @@ contains
   !! This will allocate the necessary arrays
   !!
   subroutine init(self, db, geom, nG, nCells, rho, lin, ani, dictFS)
-    class(fluxRR), intent(inout) :: self
-    class(mgNeutronDatabase), pointer, intent(inout)    :: db
-    class(geometryStd), pointer, intent(inout)          :: geom
+    class(arraysRR), intent(inout) :: self
+    class(mgNeutronDatabase), pointer, intent(in)       :: db
+    class(geometryStd), pointer, intent(in)             :: geom
     integer(shortInt), intent(in)                       :: nG
     integer(shortInt), intent(in)                       :: nCells
     real(defReal), intent(in)                           :: rho
     logical(defBool), intent(in)                        :: lin
     integer(shortInt), intent(in)                       :: ani
     class(dictionary), pointer, intent(inout), optional :: dictFS
-    character(100), parameter :: Here = 'init (fluxRR_class.f90)'
-
-    self % mgData => db
-    self % geom   => geom
+    character(100), parameter :: Here = 'init (arraysRR_class.f90)'
 
     self % nG          = nG
     self % nCells      = nCells
@@ -153,7 +163,6 @@ contains
     self % lin = lin
     if (ani >= 0) self % ani = ani
     if (self % lin .and. self % ani > 0) self % linAni = .true.
-
 
     ! Allocate and initialise arrays
     allocate(self % scalarFlux(self % nEl))
@@ -179,7 +188,7 @@ contains
     ! Initialise the fixed source if present
     if (present(dictFS)) then
       allocate(self % fixedSource(self % nEl))
-
+      call self % initialiseFixedSource(dictFS)
     end if
 
     ! TODO: allocate linear and anisotropic components, if present
@@ -193,17 +202,179 @@ contains
   end subroutine init
 
   !!
+  !! Return a pointer to the flux vector for a given cell
+  !!
+  subroutine getFluxPointer(self, cIdx, fluxVec)
+    class(arraysRR), intent(in)         :: self
+    integer(shortInt), intent(in)       :: cIdx
+    real(defFlt), dimension(:), pointer :: fluxVec
+    integer(shortInt)                   :: baseIdx1, baseIdx2
+
+    baseIdx1 = self % nG * (cIdx - 1) + 1
+    baseIdx2 = self % nG * cIdx
+    fluxVec => self % scalarFlux(baseIdx1:baseIdx2)
+
+  end subroutine getFluxPointer
+  
+  !!
+  !! Increment the local volume estimate in cell cIdx
+  !!
+  subroutine incrementVolume(self, cIdx, length)
+    class(arraysRR), intent(in)   :: self
+    integer(shortInt), intent(in) :: cIdx
+    real(defReal), intent(in)     :: length     
+    
+    self % volumeTracks(cIdx) = self % volumeTracks(cIdx) + length
+  
+  end subroutine incrementVolume
+  
+  !!
+  !! Check if a cell has been hit
+  !!
+  function hasHit(self, cIdx) result (hit)
+    class(arraysRR), intent(in)   :: self
+    integer(shortInt), intent(in) :: cIdx
+    integer(shortInt)             :: hit
+    
+    hit = self % cellHit(cIdx)
+  
+  end subroutine hasHit
+  
+  !!
+  !! Hit a cell 
+  !!
+  subroutine hitCell(self, cIdx)
+    class(arraysRR), intent(in)   :: self
+    integer(shortInt), intent(in) :: cIdx
+    
+    self % cellHit(cIdx) = 1
+  
+  end subroutine hitCell
+
+  !!
+  !! Return the cell hit rate for the given iteration
+  !!
+  function cellHitRate(self) result(hitRate)
+    class(arraysRR), intent(in)  :: self
+    integer(shortInt)            :: cIdx, totalHit
+    real(defReal)                :: hitRate
+
+    totalHit = 0
+    !$omp parallel do reduction(+:totalHit)
+    do cIdx = 1, self % nCells
+      totalHit = totalHit + self % cellHit(cIdx)
+    end do
+    !$omp end parallel do
+    hitRate = real(hitRate / self % nCells, defReal)
+
+  end function cellHitRate
+
+  !! 
+  !! Wipe cell hits
+  !!
+  subroutine wipeCellHits(self)
+    class(arraysRR), intent(in)  :: self
+    integer(shortInt)            :: cIdx
+
+    !$omp parallel do
+    do cIdx = 1, self % nCells
+      self % cellHit(cIdx) = 0
+    end do
+    !$omp end parallel do
+
+  end subroutine wipeCellHits
+  
+  !!
+  !! Has a cell ever been found?
+  !!
+  function found(self, cIdx) result(wasFound)
+    class(arraysRR), intent(in)   :: self
+    integer(shortInt), intent(in) :: cIdx
+    logical(defBool)              :: wasFound
+    
+    wasFound = self % cellFound(cIdx)
+  
+  end function found
+
+  !!
+  !! Note that a new cell has been found
+  !!
+  subroutine newFound(self, cIdx, r)
+    class(arraysRR), intent(inout)          :: self
+    integer(shortInt), intent(in)           :: cIdx
+    real(defReal), dimension(3), intent(in) :: r
+
+    !$omp critical 
+    self % cellFound(cIdx) = .true.
+    self % cellPos(cIdx,:) = r
+    !$omp end critical
+
+  end subroutine newFound
+
+  !!
+  !! Return number of energy groups used
+  !!
+  function getNG(self) result(nG)
+    class(arraysRR), intent(in) :: self
+    integer(shortInt)           :: nG
+
+    nG = self % nG
+
+  end function getNG
+
+  !!
+  !! Return a pointer to the source vector for a given cell
+  !!
+  subroutine getSourcePointer(self, cIdx, sourceVec)
+    class(arraysRR), intent(in)         :: self
+    integer(shortInt), intent(in)       :: cIdx
+    real(defFlt), dimension(:), pointer :: sourceVec
+    integer(shortInt)                   :: baseIdx1, baseIdx2
+
+    baseIdx1 = self % nG * (cIdx - 1) + 1
+    baseIdx2 = self % nG * cIdx
+    sourceVec => self % source(baseIdx1:baseIdx2)
+
+  end subroutine getSourcePointer
+
+  !!
+  !! Set the OMP lock in a given cell
+  !!
+  subroutine setLock(self, cIdx) 
+    class(arraysRR), intent(inout) :: self
+    integer(shortInt), intent(in)  :: cIdx
+
+    call OMP_set_lock(self % locks(cIdx))
+
+  end subroutine setLock
+  
+  !!
+  !! Unset the OMP lock in a given cell
+  !!
+  subroutine unsetLock(self, cIdx) 
+    class(arraysRR), intent(inout) :: self
+    integer(shortInt), intent(in)  :: cIdx
+
+    call OMP_unset_lock(self % locks(cIdx))
+
+  end subroutine unsetLock
+
+
+  !!
   !! Normalise flux and volume by total track length and increments
   !! the flux by the neutron source
   !!
-  subroutine normaliseFluxAndVolumeFlatIso(self, it)
-    class(arraysRR), intent(inout) :: self
-    integer(shortInt), intent(in)  :: it
-    real(defFlt)                   :: norm
-    real(defReal)                  :: normVol
-    real(defFlt), save             :: total, vol, sigGG, D
-    integer(shortInt), save        :: g, matIdx, idx
-    integer(shortInt)              :: cIdx
+  subroutine normaliseFluxAndVolumeFlatIso(self, XSData, geom, it)
+    class(arraysRR), intent(inout)            :: self
+    class(dataRR), pointer, intent(in)        :: XSData
+    class(geometrdyStd), pointer, intent(in)  :: geom
+    integer(shortInt), intent(in)             :: it
+    real(defFlt)                              :: norm
+    real(defReal)                             :: normVol
+    real(defFlt), save                        :: total, vol, sigGG, D
+    real(defFlt), dimension(:), pointer, save :: total
+    integer(shortInt), save                   :: g, matIdx, idx
+    integer(shortInt)                         :: cIdx
     !$omp threadprivate(total, vol, idx, g, matIdx, sigGG, D)
 
     norm = real(ONE / self % lengthPerIt, defFlt)
@@ -211,28 +382,29 @@ contains
 
     !$omp parallel do schedule(static)
     do cIdx = 1, self % nCells
-      matIdx =  self % geom % geom % graph % getMatFromUID(cIdx) 
+      matIdx =  geom % geom % graph % getMatFromUID(cIdx) 
       
       ! Update volume due to additional rays
       self % volume(cIdx) = self % volumeTracks(cIdx) * normVol
       vol = real(self % volume(cIdx), defFlt)
 
+      call XSData % getTotalPointer(matIdx, total)
+
       do g = 1, self % nG
 
-        total = self % XSdata % getTotalXS(matIdx, g)
         idx   = self % nG * (cIdx - 1) + g
 
         if (vol > volume_tolerance) then
-          self % scalarFlux(idx) = self % scalarFlux(idx) * norm / ( total * vol)
+          self % scalarFlux(idx) = self % scalarFlux(idx) * norm / ( total(g) * vol)
         end if
         
         ! Apply stabilisation for negative XSs
         if (matIdx < VOID_MAT) then
-          sigGG = self % XSdata % getSigmaS(matIdx, g, g)
+          sigGG = XSData % getSigmaS(matIdx, g, g)
 
           ! Presumes non-zero total XS
           if ((sigGG < 0) .and. (total > 0)) then
-            D = -real(self % rho, defFlt) * sigGG / total
+            D = -real(self % rho, defFlt) * sigGG / total(g)
           else
             D = 0.0_defFlt
           end if
@@ -252,21 +424,24 @@ contains
   !!
   !! Kernel to update sources given a cell index
   !!
-  subroutine sourceUpdateKernelFlatIso(self, cIdx, ONE_KEFF)
-    class(arraysRR), target, intent(inout) :: self
-    integer(shortInt), intent(in)          :: cIdx
-    real(defFlt), intent(in)               :: ONE_KEFF
-    real(defFlt)                           :: scatter, fission
-    real(defFlt), dimension(:), pointer    :: nuFission, total, chi, scatterXS 
-    integer(shortInt)                      :: matIdx, g, gIn, baseIdx, idx
-    real(defFlt), pointer, dimension(:)    :: fluxVec, scatterVec
+  subroutine sourceUpdateKernelFlatIso(self, cIdx, ONE_KEFF, XSData, geom)
+    class(arraysRR), target, intent(inout)   :: self
+    integer(shortInt), intent(in)            :: cIdx
+    class(dataRR), pointer, intent(in)       :: XSData
+    class(geometrdyStd), pointer, intent(in) :: geom
+    real(defReal), intent(in)                :: ONE_KEFF
+    real(defFlt)                             :: scatter, fission, ONE_K
+    real(defFlt), dimension(:), pointer      :: nuFission, total, chi, scatterXS, &
+                                                scatterVec, fluxVec 
+    integer(shortInt)                        :: matIdx, g, gIn, baseIdx, idx, sIdx1, sIdx2
 
+    ONE_K = real(ONE_KEFF,defFlt)
     ! Identify material
-    matIdx  =  self % geom % geom % graph % getMatFromUID(cIdx) 
+    matIdx  =  geom % geom % graph % getMatFromUID(cIdx) 
     
     ! Guard against void cells
     if (matIdx >= VOID_MAT) then
-      baseIdx = self % ng * (cIdx - 1)
+      baseIdx = self % nG * (cIdx - 1)
       do g = 1, self % nG
         idx = baseIdx + g
         self % source(idx) = 0.0_defFlt
@@ -276,13 +451,10 @@ contains
 
     ! Obtain XSs
     matIdx = (matIdx - 1) * self % nG
-    total => self % sigmaT(matIdx + (1):(self % nG))
-    scatterXS => self % sigmaS(matIdx * self % nG + (1):(self % nG*self % nG))
-    nuFission => self % nuSigmaF(matIdx + (1):(self % nG))
-    chi => self % chi(matIdx + (1):(self % nG))
+    call XSData % getPointers(matIdx, total, nuFission, scatterXS, chi)
 
-    baseIdx = self % ng * (cIdx - 1)
-    fluxVec => self % prevFlux(baseIdx+(1):(self % nG))
+    baseIdx = self % nG * (cIdx - 1)
+    fluxVec => self % prevFlux((baseIdx + 1):(baseIdx + self % nG))
 
     ! Calculate fission source
     fission = 0.0_defFlt
@@ -290,11 +462,13 @@ contains
     do gIn = 1, self % nG
       fission = fission + fluxVec(gIn) * nuFission(gIn)
     end do
-    fission = fission * ONE_KEFF
+    fission = fission * ONE_K
 
     do g = 1, self % nG
 
-      scatterVec => scatterXS(self % nG * (g - 1) + (1):self % nG)
+      sIdx1 = self % nG * (g - 1) + 1
+      sIdx2 = self % nG * g
+      scatterVec => scatterXS(sIdx1:sIdx2)
 
       ! Calculate scattering source
       scatter = 0.0_defFlt
@@ -319,60 +493,73 @@ contains
   end subroutine sourceUpdateKernelFlatIso
 
   
-  !!
+  !! 
   !! Calculate keff
+  !! Wraps the main kernel call to allow for OMP + SIMD (thanks Fortran)
   !!
-  function calculateKeff(self, k0) result(k1)
-    class(arraysRR), intent(inout)              :: self
-    real(defReal), intent(in)                   :: k0
-    real(defReal)                               :: k1
-    real(defFlt)                                :: fissionRate, prevFissionRate
-    real(defFlt), save                          :: fissLocal, prevFissLocal, vol
-    integer(shortInt), save                     :: matIdx, g, idx, mIdx
-    integer(shortInt)                           :: cIdx
-    class(baseMgNeutronMaterial), pointer, save :: mat
-    class(materialHandle), pointer, save        :: matPtr
-    !$omp threadprivate(mat, matPtr, fissLocal, prevFissLocal, matIdx, g, idx, mIdx, vol)
+  function calculateKeff(self, k0, XSData, geom) result(k1)
+    class(arraysRR), intent(inout)           :: self
+    real(defReal), intent(in)                :: k0
+    class(dataRR), pointer, intent(in)       :: XSData
+    class(geometrdyStd), pointer, intent(in) :: geom
+    real(defReal)                            :: k1
+    integer(shortInt)                        :: cIdx
+    real(defReal), save                      :: fissLocal, prevFissLocal
+    real(defReal)                            :: fissTotal, prevFissTotal
+    !$omp threadprivate (fissLocal, prevFissLocal)
 
-    fissionRate     = 0.0_defFlt
-    prevFissionRate = 0.0_defFlt
-    !$omp parallel do schedule(static) reduction(+: fissionRate, prevFissionRate)
+    !$omp parallel do schedule(dynamic) reduction(+: fissTotal, prevFissTotal
     do cIdx = 1, self % nCells
+      call self % calculateKeffKernel(cIdx, XSData, geom, fissLocal, prevFissLocal)
+      fissTotal     = fissTotal + fissLocal
+      prevFissTotal = prevFissTotal + prevFissLocal
+    end do 
+    !$omp parallel end do
 
-      ! Identify material
-      matIdx =  self % geom % geom % graph % getMatFromUID(cIdx) 
-      if (matIdx >= VOID_MAT) cycle
+    k1 = k0 * fissTotal / prevFissTotal 
 
-      matPtr => self % mgData % getMaterial(matIdx)
-      mat    => baseMgNeutronMaterial_CptrCast(matPtr)
-      if (.not. mat % isFissile()) cycle
+  end function calculateKeff
+  
+  !!
+  !! Calculate keff for a single cell
+  !!
+  subroutine calculateKeffKernel(self, cIdx, XSData, geom, fissionRate, prevFissionRate)
+    class(arraysRR), intent(inout)              :: self
+    integer(shortInt), intent (in)              :: cIdx
+    class(dataRR), pointer, intent(in)          :: XSData
+    class(geometrdyStd), pointer, intent(in)    :: geom
+    real(defReal), intent(out)                  :: fissionRate, prevFissionRate
+    real(defReal)                               :: vol
+    integer(shortInt)                           :: g, matIdx
+    real(defFlt), dimension(:), pointer         :: nuFission, flux, prevFlux
 
-      vol = real(self % volume(cIdx), defFlt)
+    fissionRate     = ZERO
+    prevFissionRate = ZERO
 
-      if (vol <= volume_tolerance) cycle
+    ! Identify material
+    matIdx =  geom % geom % graph % getMatFromUID(cIdx) 
+      
+    ! Check whether to continue in this cell
+    if (matIdx >= VOID_MAT) return
+    if (.not. XSData % isFissile(matIdx)) return
+    vol = self % volume(cIdx)
+    if (vol <= volume_tolerance) return
 
-      fissLocal = 0.0_defFlt
-      prevFissLocal = 0.0_defFlt
-      mIdx = (matIdx - 1) * self % nG
-      do g = 1, self % nG
-        
-        ! Source index
-        idx = self % nG * (cIdx - 1) + g
-        fissLocal     = fissLocal     + self % scalarFlux(idx) * self % nuSigmaF(mIdx + g)
-        prevFissLocal = prevFissLocal + self % prevFlux(idx) * self % nuSigmaF(mIdx + g)
+    call XSData % getNuFissPointer(matIdx, nuSigmaF)
+    flux => self % scalarFlux((self % nG * (cIdx - 1) + 1):(self % nG * cIdx))
+    prevFlux => self % prevFlux((self % nG * (cIdx - 1) + 1):(self % nG * cIdx))
 
-      end do
-
-      fissionRate     = fissionRate     + fissLocal * vol
-      prevFissionRate = prevFissionRate + prevFissLocal * vol
-
+    !$omp simd reduction (+: fissionRate, prevFissionRate)
+    do g = 1, self % nG
+      fissionRate     = fissionRate     + real(flux(g) * nuSigmaF(g), defReal)
+      prevFissionRate = prevFissionRate + real(prevFlux(g) * nuSigmaF(g), defReal)
     end do
-    !$omp end parallel do
 
-    ! Update k
-    k1 = k0 * fissionRate / prevFissionRate
+    fissionRate     = fissionRate * vol
+    prevFissionRate = prevFissionRate * vol
 
-  end subroutine calculateKeff
+  end subroutine calculateKeffKernel
+  
   
   !!
   !! Sets prevFlux to scalarFlux and zero's scalarFlux
