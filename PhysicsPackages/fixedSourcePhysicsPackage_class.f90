@@ -275,7 +275,7 @@ contains
     type(outputFile)                                :: out
     character(nameLen)                              :: name
 
-    call out % init(self % outputFormat)
+    call out % init(self % outputFormat, filename=self % outputFile)
 
     name = 'seed'
     call out % printValue(self % pRNG % getSeed(),name)
@@ -295,8 +295,6 @@ contains
 
     ! Print tally
     call self % tally % print(out)
-
-    call out % writeToFile(self % outputFile)
 
   end subroutine collectResults
 

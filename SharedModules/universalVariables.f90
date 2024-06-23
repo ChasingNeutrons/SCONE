@@ -69,8 +69,14 @@ module universalVariables
                                   targetNotFound    = -3, &
                                   NOT_FOUND         = -3
 
+  ! Integer indexes for type of tracking cross section requested
+  integer(shortInt), parameter :: MATERIAL_XS = 1, &
+                                  MAJORANT_XS = 2, &
+                                  TRACKING_XS = 3
+
   ! Physical constants
-  real(defReal), parameter :: neutronMass = 939.5654133_defReal, &   ! Neutron mass in MeV/c^2
+  ! Neutron mass and speed of light in vacuum from from https://physics.nist.gov/cuu/Constants/index.html
+  real(defReal), parameter :: neutronMass = 939.56542194_defReal,  & ! Neutron mass in MeV (m*c^2)
                               lightSpeed  = 2.99792458e10_defReal, & ! Light speed in cm/s
                               energyPerFission = 200.0_defReal       ! MeV
 
@@ -78,7 +84,7 @@ module universalVariables
   real(defReal), parameter :: joulesPerMeV = 1.60218e-13     ! Convert MeV to J
 
   ! Global name variables used to define specific geometry or field types
-  character(nameLen), parameter :: nameUFS = 'uniFissSites'
-  character(nameLen), parameter :: nameWW  = 'WeightWindows'  
+  character(nameLen), parameter :: nameUFS  = 'uniFissSites'
+  character(nameLen), parameter :: nameWW   = 'WeightWindows'
 
 end module universalVariables

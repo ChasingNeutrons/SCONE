@@ -25,14 +25,16 @@ module tallyMap1DFactory_func
   use tallyMap1D_inter,    only : tallyMap1D
 
   ! TallyMap implementations
-  use energyMap_class,   only : energyMap
-  use spaceMap_class,    only : spaceMap
-  use materialMap_class, only : materialMap
-  use homogMatMap_class, only : homogMatMap
-  use weightMap_class,   only : weightMap
-  use cellMap_class,     only : cellMap
-  use testMap_class,     only : testMap
-!  use matXsMap_class,    only : matXsMap
+  use energyMap_class,    only : energyMap
+  use spaceMap_class,     only : spaceMap
+  use materialMap_class,  only : materialMap
+  use homogMatMap_class,  only : homogMatMap
+  use weightMap_class,    only : weightMap
+  use cellMap_class,      only : cellMap
+  use testMap_class,      only : testMap
+  use collNumMap_class,   only : collNumMap
+  use radialMap_class,    only : radialMap
+  use directionMap_class, only : directionMap
 
   implicit none
   private
@@ -40,19 +42,20 @@ module tallyMap1DFactory_func
   public :: new_tallyMap1D
   public :: new_tallyMap
 
-
-  ! *** ADD NAME OF A NEW TALLY MAP 1D HERE ***!
   ! List that contains all accaptable types of tallyMaps1D
   ! It is printed if type was unrecognised
   ! NOTE:
   ! For now  it is necessary to adjust trailing blanks so all enteries have the same length
-  character(nameLen),dimension(*),parameter, public :: AVALIBLE_tallyMaps1D = [ 'energyMap  ',&
-                                                                                'spaceMap   ',&
-                                                                                'materialMap',&
-                                                                                'homogMatMap',&
-                                                                                'weightMap  ',&
-                                                                                'cellMap    ',&
-                                                                                'testMap    ']
+  character(nameLen),dimension(*),parameter, public :: AVALIBLE_tallyMaps1D = [ 'energyMap   ',&
+                                                                                'spaceMap    ',&
+                                                                                'materialMap ',&
+                                                                                'homogMatMap ',&
+                                                                                'weightMap   ',&
+                                                                                'cellMap     ',&
+                                                                                'collNumMap  ',&
+                                                                                'radialMap   ',&
+                                                                                'directionMap',&
+                                                                                'testMap     ']
 
 contains
 
@@ -81,48 +84,45 @@ contains
     call dict % get(type,'type')
 
     ! Allocate approperiate subclass of tallyMap
-    ! *** ADD CASE STATEMENT FOR A NEW TALLY MAP BELOW ***!
     select case(type)
       case('energyMap')
         allocate(energyMap :: new)
-        call new % init(dict)
 
       case('spaceMap')
         allocate(spaceMap :: new)
-        call new % init(dict)
 
       case('materialMap')
         allocate(materialMap :: new)
-        call new % init(dict)
 
       case('homogMatMap')
         allocate(homogMatMap :: new)
-        call new % init(dict)
 
       case('weightMap')
         allocate(weightMap :: new)
-        call new % init(dict)
 
       case('cellMap')
         allocate(cellMap :: new)
-        call new % init(dict)
+
+      case('collNumMap')
+        allocate(collNumMap :: new)
+
+      case('radialMap')
+        allocate(radialMap :: new)
+
+      case('directionMap')
+        allocate(directionMap :: new)
 
       case('testMap')
         allocate(testMap :: new)
-        call new % init(dict)
 
-     !*** NEW TALLY MAP TEMPLATE ***!
-     !case('<newTallyMapName>')
-     !  allocate(<newTallyMapName> :: new)
-     !  call new % init(dict)
-     !
+      case default
+        print *, AVALIBLE_tallyMaps1D
+        call fatalError(Here,'Unrecognised type of tallyMap1D : ' // trim(type))
+
     end select
 
-    ! Print error if failed to allocate
-    if(.not.allocated(new)) then
-      print *, AVALIBLE_tallyMaps1D
-      call fatalError(Here,'Unrecognised type of tallyMap1D : ' // trim(type))
-    end if
+    ! Initialise new map
+    call new % init(dict)
 
   end subroutine new_tallyMap1D
 

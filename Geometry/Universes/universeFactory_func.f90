@@ -19,7 +19,6 @@ module universeFactory_func
   implicit none
   private
 
-  ! ** ADD NAME OF NEW UNIVERSE TO THE LIST
   ! List contains acceptable types of universe
   ! NOTE: It is necessary to adjust trailing blanks so all entries have the same length
   character(nameLen), dimension(*), parameter :: AVAILABLE_UNI = ['rootUniverse    ',&
@@ -62,7 +61,6 @@ contains
     call dict % get(type, 'type')
 
     ! Allocate appropriate universe
-    ! ** FOR NEW UNIVERSE ADD CASE STATEMENT HERE ** !
     select case (type)
       case ('rootUniverse')
         allocate(rootUniverse :: ptr)
