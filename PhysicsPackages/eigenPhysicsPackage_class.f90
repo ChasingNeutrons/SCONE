@@ -123,17 +123,21 @@ contains
   subroutine run(self)
     class(eigenPhysicsPackage), intent(inout) :: self
 
-    print *, repeat("<>",50)
-    print *, "/\/\ EIGENVALUE CALCULATION /\/\"
+    if (self % loud) then
+      print *, repeat("<>",50)
+      print *, "/\/\ EIGENVALUE CALCULATION /\/\"
+    end if
 
     call self % generateInitialState()
     call self % cycles(self % inactiveTally, self % inactiveAtch, self % N_inactive)
     call self % cycles(self % activeTally, self % activeAtch, self % N_active)
     call self % collectResults()
 
-    print *
-    print *, "\/\/ END OF EIGENVALUE CALCULATION \/\/"
-    print *
+    if (self % loud) then
+      print *
+      print *, "\/\/ END OF EIGENVALUE CALCULATION \/\/"
+      print *
+    end if
   end subroutine
 
   !!
@@ -279,14 +283,16 @@ contains
 
 
       ! Display progress
-      call printFishLineR(i)
-      print *
-      print *, 'Cycle: ', numToChar(i), ' of ', numToChar(N_cycles)
-      print *, 'Pop: ', numToChar(Nstart) , ' -> ', numToChar(Nend)
-      print *, 'Elapsed time: ', trim(secToChar(elapsed_T))
-      print *, 'End time:     ', trim(secToChar(end_T))
-      print *, 'Time to end:  ', trim(secToChar(T_toEnd))
-      call tally % display()
+      if (self % loud) then
+        call printFishLineR(i)
+        print *
+        print *, 'Cycle: ', numToChar(i), ' of ', numToChar(N_cycles)
+        print *, 'Pop: ', numToChar(Nstart) , ' -> ', numToChar(Nend)
+        print *, 'Elapsed time: ', trim(secToChar(elapsed_T))
+        print *, 'End time:     ', trim(secToChar(end_T))
+        print *, 'Time to end:  ', trim(secToChar(T_toEnd))
+        call tally % display()
+      end if
     end do
 
     ! Load elapsed time
@@ -309,9 +315,9 @@ contains
     call self % nextCycle % init(3 * self % pop)
 
     ! Generate initial surce
-    print *, "GENERATING INITIAL FISSION SOURCE"
+    if (self % loud) print *, "GENERATING INITIAL FISSION SOURCE"
     call self % initSource % generate(self % thisCycle, self % pop, self % pRNG)
-    print *, "DONE!"
+    if (self % loud) print *, "DONE!"
 
   end subroutine generateInitialState
 
@@ -367,9 +373,10 @@ contains
   !!
   !! Initialise from individual components and dictionaries for inactive and active tally
   !!
-  subroutine init(self, dict)
+  subroutine init(self, dict, loud)
     class(eigenPhysicsPackage), intent(inout) :: self
     class(dictionary), intent(inout)          :: dict
+    logical(defBool), intent(in), optional    :: loud
     class(dictionary),pointer                 :: tempDict
     type(dictionary)                          :: locDict1, locDict2
     integer(shortInt)                         :: seed_temp
@@ -384,6 +391,12 @@ contains
     character(100), parameter :: Here ='init (eigenPhysicsPackage_class.f90)'
 
     call cpu_time(self % CPU_time_start)
+
+    if (present(loud)) then
+      self % loud = loud
+    else
+      self % loud = .true.
+    end if
 
     ! Read calculation settings
     call dict % get( self % pop,'pop')
@@ -446,20 +459,20 @@ contains
     ! Build geometry
     tempDict => dict % getDictPtr('geometry')
     geomName = 'eigenGeom'
-    call new_geometry(tempDict, geomName)
+    call new_geometry(tempDict, geomName, .not. self % loud)
     self % geomIdx = gr_geomIdx(geomName)
     self % geom    => gr_geomPtr(self % geomIdx)
 
     ! Activate Nuclear Data *** All materials are active
-    call ndReg_activate(self % particleType, nucData, self % geom % activeMats())
+    call ndReg_activate(self % particleType, nucData, self % geom % activeMats(), .not. self % loud)
     self % nucData => ndReg_get(self % particleType)
 
     ! Call visualisation
     if (dict % isPresent('viz')) then
-      print *, "Initialising visualiser"
+      if (self % loud) print *, "Initialising visualiser"
       tempDict => dict % getDictPtr('viz')
       call viz % init(self % geom, tempDict)
-      print *, "Constructing visualisation"
+      if (self % loud) print *, "Constructing visualisation"
       call viz % makeViz()
       call viz % kill()
     endif
@@ -548,7 +561,7 @@ contains
     call self % activeTally % push(self % activeAtch)
 
 
-    call self % printSettings()
+    if (self % loud) call self % printSettings()
 
   end subroutine init
 

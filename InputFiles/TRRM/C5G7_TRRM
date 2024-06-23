@@ -5,11 +5,11 @@ active   2600;
 inactive 1000; 
 dead     20;  
 termination 220;  
-plot 0;
+plot 1;
 cache 1;
 XSdata   mg; 
 dataType mg;
-outputFile C5G7_TRRM ;
+outputFile C5G7_TRRM;
 
 fissionMap {type multiMap;
             maps (xax yax);
@@ -29,7 +29,7 @@ geometry {
   graph {type extended;}
 
   surfaces { 
-             Domain          { id 3; type box; origin (0.0 0.0 0.0); halfwidth (32.13 32.13 32.13);}  	
+             Domain        { id 3; type box; origin (0.0 0.0 0.0); halfwidth (32.13 32.13 32.13);}  	
   }
   
   cells {  }
@@ -250,7 +250,6 @@ nuclearData {
     mg { type baseMgNeutronDatabase; PN P0;} 
   } 
   materials { 
-    numberOfGroups 7;
       
     water { 
       temp 300;

@@ -8,4 +8,5 @@ add_sources( ./physicsPackage_inter.f90
              ./rayVolPhysicsPackage_class.f90
 	     ./randomRayPhysicsPackage_class.f90
              )
-             #./dynamPhysicsPackage_class.f90)
+
+add_integration_tests(./Tests/randomRay_iTest.f90)
