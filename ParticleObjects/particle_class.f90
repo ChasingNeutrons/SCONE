@@ -41,6 +41,7 @@ module particle_class
   !!   broodID  -> ID of the source particle. It is used to indicate the primogenitor of the particles
   !!               in the particleDungeon so they can be sorted, which is necessary for reproducibility
   !!               with OpenMP
+  !!   rBirth   -> Site from which the particle originated (useful for fission matrix)
   !!
   !! Interface:
   !!   assignemnt(=)  -> Build particleState from particle
@@ -61,6 +62,7 @@ module particle_class
     integer(shortInt)          :: uniqueID = -1     ! Unique id at the lowest coord level
     integer(shortInt)          :: collisionN = 0    ! Number of collisions
     integer(shortInt)          :: broodID = 0       ! ID of the source particle
+    real(defReal),dimension(3) :: rBirth    = ZERO  ! Birth site
   contains
     generic    :: assignment(=)  => fromParticle
     generic    :: operator(.eq.) => equal_particleState
@@ -92,10 +94,10 @@ module particle_class
   type, public :: particle
     ! Particle phase space data
     type(coordList)            :: coords
-    real(defReal)              :: E         ! Particle Energy
-    integer(shortInt)          :: G         ! Particle Energy Group
-    real(defReal)              :: w         ! Particle Weight
-    real(defReal)              :: time      ! Particle time point
+    real(defReal)              :: E             ! Particle Energy
+    integer(shortInt)          :: G             ! Particle Energy Group
+    real(defReal)              :: w             ! Particle Weight
+    real(defReal)              :: time          ! Particle time point
 
     ! Particle flags
     real(defReal)              :: w0             ! Particle initial weight (for implicit, variance reduction...)
@@ -660,6 +662,7 @@ contains
     LHS % cellIdx  = RHS % coords % cell()
     LHS % collisionN = RHS % collisionN
     LHS % broodID    = RHS % broodID
+    LHS % rBirth     = RHS % preHistory % r
 
   end subroutine particleState_fromParticle
 
@@ -727,6 +730,7 @@ contains
     self % uniqueID = -1
     self % collisionN = 0
     self % broodID    = 0
+    self % rBirth = ZERO
 
   end subroutine kill_particleState
 

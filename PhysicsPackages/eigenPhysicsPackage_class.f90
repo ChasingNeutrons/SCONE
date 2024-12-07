@@ -13,7 +13,7 @@ module eigenPhysicsPackage_class
                                              timerTime, timerReset, secToChar
 
   ! Particle classes and Random number generator
-  use particle_class,                 only : particle, P_NEUTRON
+  use particle_class,                 only : particle, particleState, P_NEUTRON
   use particleDungeon_class,          only : particleDungeon
   use RNG_class,                      only : RNG
 
@@ -54,6 +54,9 @@ module eigenPhysicsPackage_class
   use tallyAdmin_class,               only : tallyAdmin
   use tallyResult_class,              only : tallyResult
   use keffAnalogClerk_class,          only : keffResult
+  use fissionMatrixClerk_class,       only : FMResult
+  use tallyMap_inter,                 only : tallyMap
+  use tallyMapFactory_func,           only : new_tallyMap
 
   ! Factories
   use transportOperatorFactory_func,  only : new_transportOperator
@@ -95,6 +98,9 @@ module eigenPhysicsPackage_class
     real(defReal)      :: keff_0
     integer(shortInt)  :: bufferSize
     logical(defBool)   :: UFS = .false.
+    logical(defBool)   :: doFM = .false.
+    class(tallyMap), allocatable :: fmMap
+
 
     ! Calculation components
     type(particleDungeon), pointer :: thisCycle    => null()
@@ -146,15 +152,18 @@ contains
     integer(shortInt), intent(in)             :: N_cycles
     type(particleDungeon), save               :: buffer
     integer(shortInt)                         :: i, n, Nstart, Nend, nParticles
-    class(tallyResult),allocatable            :: res
+    class(tallyResult),allocatable            :: res, resFM
     type(collisionOperator), save             :: collOp
     class(transportOperator),allocatable,save :: transOp
     type(RNG), target, save                   :: pRNG
     type(particle), save                      :: neutron
+    type(particleState), save                 :: neutState
     real(defReal)                             :: k_old, k_new
+    real(defReal), dimension(:), allocatable  :: vec
     real(defReal)                             :: elapsed_T, end_T, T_toEnd
+    integer(shortInt), save                   :: idx
     character(100),parameter :: Here ='cycles (eigenPhysicsPackage_class.f90)'
-    !$omp threadprivate(neutron, buffer, collOp, transOp, pRNG)
+    !$omp threadprivate(neutron, buffer, collOp, transOp, pRNG, neutState, idx)
 
     !$omp parallel
     ! Create particle buffer
@@ -174,6 +183,10 @@ contains
     ! Reset and start timer
     call timerReset(self % timerMain)
     call timerStart(self % timerMain)
+      
+    if(self % printSource == 1) then
+      call self % thisCycle % printToFile(trim(self % outputFile)//'_source'//numToChar(0))
+    end if
 
     do i=1,N_cycles
 
@@ -197,7 +210,7 @@ contains
 
         bufferLoop: do
           call self % geom % placeCoord(neutron % coords)
-
+        
           ! Set k-eff for normalisation in the particle
           neutron % k_eff = k_new
 
@@ -238,8 +251,39 @@ contains
         call self % ufsField % updateMap()
       end if
 
+      ! Get the FM eigenvector and use it to scale particle weights
+      if (self % doFM) then
+        ! Obtain estimate of k_eff
+        call tallyAtch % getResult(resFM,'fm')
+      
+        select type(resFM)
+          class is(FMResult)
+            vec = resFM % eigVec
+            print *,'Scaling fission neutron weight'
+            ! Scale particle weights according to the eigenvector
+            !$omp parallel do
+            do n = 1, self % nextCycle % popSize()
+
+              ! Get the particle, map it, scale it
+              call self % nextCycle % copy(neutron, n)
+              neutState = neutron
+              idx = self % fmMap % map(neutState)
+              neutState % wgt = neutState % wgt * vec(idx)
+              call self % nextCycle % replace(neutState, n)
+
+            end do
+            !$omp end parallel do
+
+          class default
+            call fatalError(Here, 'Invalid result has been returned')
+
+        end select
+      end if
+
       ! Normalise population
       call self % nextCycle % normSize(self % pop, self % pRNG)
+      ! Add to preserve total weight from one iteraiton to the next
+      call self % nextCycle % normWeight(real(self % pop,defReal))
 
       if(self % printSource == 1) then
         call self % nextCycle % printToFile(trim(self % outputFile)//'_source'//numToChar(i))
@@ -370,7 +414,7 @@ contains
     class(dictionary), intent(inout)          :: dict
     class(dictionary),pointer                 :: tempDict
     type(dictionary)                          :: locDict1, locDict2
-    integer(shortInt)                         :: seed_temp
+    integer(shortInt)                         :: seed_temp, nMode
     integer(longInt)                          :: seed
     character(10)                             :: time
     character(8)                              :: date
@@ -462,6 +506,7 @@ contains
       call viz % kill()
     endif
 
+
     ! Read uniform fission site option as a geometry field
     if (dict % isPresent('uniformFissionSites')) then
       self % ufs = .true.
@@ -500,13 +545,15 @@ contains
     call self % activeTally % init(tempDict)
 
     ! Load Initial source
+    call dict % get(nMode,'mode')
     if (dict % isPresent('source')) then ! Load definition from file
       call new_source(self % initSource, dict % getDictPtr('source'), self % geom)
 
     else
-      call locDict1 % init(3)
+      call locDict1 % init(4)
       call locDict1 % store('type', 'fissionSource')
       call locDict1 % store('data', trim(energy))
+      call locDict1 % store('mode', nMode)
       call new_source(self % initSource, locDict1, self % geom)
       call locDict1 % kill()
 
@@ -514,12 +561,24 @@ contains
 
     ! Initialise active and inactive tally attachments
     ! Inactive tally attachment
-    call locDict1 % init(2)
-    call locDict2 % init(2)
+    call locDict1 % init(20)
+    call locDict2 % init(20)
 
     call locDict2 % store('type','keffAnalogClerk')
     call locDict1 % store('keff', locDict2)
     call locDict1 % store('display',['keff'])
+    
+    ! Read fission matrix acceleration option
+    if (dict % isPresent('fm')) then
+
+      self % doFM = .true.
+      tempDict => dict % getDictPtr('fm')
+      call locDict1 % store('fm', tempDict)
+      
+      ! Read map
+      call new_tallyMap(self % fmMap, tempDict % getDictPtr('map'))
+
+    end if
 
     allocate(self % inactiveAtch)
     call self % inactiveAtch % init(locDict1)
@@ -528,12 +587,18 @@ contains
     call locDict1 % kill()
 
     ! Active tally attachment
-    call locDict1 % init(2)
-    call locDict2 % init(2)
+    call locDict1 % init(20)
+    call locDict2 % init(20)
 
     call locDict2 % store('type','keffImplicitClerk')
     call locDict1 % store('keff', locDict2)
     call locDict1 % store('display',['keff'])
+    
+    ! Read fission matrix acceleration option
+    if (dict % isPresent('fissionMatrix')) then
+      tempDict => dict % getDictPtr('fm')
+      call locDict1 % store('fm', tempDict)
+    end if
 
     allocate(self % activeAtch)
     call self % activeAtch % init(locDict1)

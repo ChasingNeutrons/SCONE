@@ -619,10 +619,12 @@ contains
     open(unit = 10, file = filename, status = 'new')
 
     ! Print out each particle co-ordinate
+    ! Print only the 5th particle
     do i = 1, self % pop
-      write(10, *) self % prisoners(i) % r, self % prisoners(i) % dir, &
-                   self % prisoners(i) % E, self % prisoners(i) % G, &
-                   self % prisoners(i) % broodID
+      !write(10, *) self % prisoners(i) % r, self % prisoners(i) % dir, &
+      !             self % prisoners(i) % E, self % prisoners(i) % G, &
+      !             self % prisoners(i) % wgt, self % prisoners(i) % broodID
+      write(10, *) self % prisoners(i) % r(1), self % prisoners(i) % wgt
     end do
 
     ! Close the file
