@@ -148,7 +148,7 @@ contains
         ! Include scattering multiplicity
         do g1 = 1, self % nG
           self % sigmaS(self % nG * self % nG * (m - 1) + self % nG * (g - 1) + g1)  = &
-                  real(mat % getScatterXS(g1, g, rand) * mat % scatter % prod(g1, g) , defFlt)
+                  real(mat % getScatterXS(g1, g, rand) * mat % scatter % prod(g, g1) , defFlt)
         end do
       end do
       self % fissile(m) = fiss
