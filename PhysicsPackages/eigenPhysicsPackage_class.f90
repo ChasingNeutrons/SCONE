@@ -414,7 +414,7 @@ contains
     class(dictionary), intent(inout)          :: dict
     class(dictionary),pointer                 :: tempDict
     type(dictionary)                          :: locDict1, locDict2
-    integer(shortInt)                         :: seed_temp, nMode
+    integer(shortInt)                         :: seed_temp
     integer(longInt)                          :: seed
     character(10)                             :: time
     character(8)                              :: date
@@ -545,7 +545,6 @@ contains
     call self % activeTally % init(tempDict)
 
     ! Load Initial source
-    call dict % get(nMode,'mode')
     if (dict % isPresent('source')) then ! Load definition from file
       call new_source(self % initSource, dict % getDictPtr('source'), self % geom)
 
@@ -553,7 +552,6 @@ contains
       call locDict1 % init(4)
       call locDict1 % store('type', 'fissionSource')
       call locDict1 % store('data', trim(energy))
-      call locDict1 % store('mode', nMode)
       call new_source(self % initSource, locDict1, self % geom)
       call locDict1 % kill()
 

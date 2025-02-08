@@ -62,7 +62,6 @@ module fissionSource_class
     real(defReal)               :: E      = ZERO
     integer(shortInt)           :: G      = 0
     integer(shortInt)           :: attempts = 10000
-    integer(shortInt)           :: nMode
   contains
     procedure :: init
     procedure :: sampleParticle
@@ -138,11 +137,6 @@ contains
       self % top    = bounds(4:6)
     end if
 
-    call dict % get(self % nMode,'mode')
-
-    if (self % nMode <= 0) call fatalError(Here,'Perturbing mode must be >= 1')
-
-
   end subroutine init
 
   !!
@@ -160,8 +154,8 @@ contains
     type(fissionCE), pointer             :: fissCE
     type(fissionMG), pointer             :: fissMG
     real(defReal), dimension(3)          :: r, rand3
-    real(defReal)                        :: mu, phi, E_out, E_up, E_down, z, omega0
-    integer(shortInt)                    :: matIdx, uniqueID, nucIdx, i, G_out, j
+    real(defReal)                        :: mu, phi, E_out, E_up, E_down
+    integer(shortInt)                    :: matIdx, uniqueID, nucIdx, i, G_out
     character(100), parameter :: Here = 'sampleParticle (fissionSource_class.f90)'
 
     ! Get pointer to appropriate nuclear database
@@ -186,21 +180,11 @@ contains
       rand3(2) = rand % get()
       rand3(3) = rand % get()
       
-      ! SHOULD CHANGE ALL THIS TO JUST BE A STEP FUNCTION
-      !! Linear sampling
-      !rand3 = sqrt(rand3)
-      r = (self % top - self % bottom) * rand3 + self % bottom
-
-      ! Sample from the sum of the first X cosine modes + a shift
-      ! Do rejection sampling
-      omega0 = PI * 2 / (self % top(1) - self % bottom(1))
-
-      z = 5
-      do j = self % nMode - 1, self % nMode
-        z = z + cos(omega0 * j * r(1)) + sin(omega0 * j * r(1))
-      end do
-      ! Bounded by 8
-      if (z/10 > rand % get()) cycle rejection
+      ! Sample uniformly in space
+      ! However, replace the x position with an indicator function sampling
+      ! I do this for all here since it doesn't actually matter with y and z
+      !r = (self % top - self % bottom) * rand3 + self % bottom
+      r = (self % top - self % bottom) * (0.2 * rand3 + 0.6) + self % bottom
 
       ! Find material under position
       call self % geom % whatIsAt(matIdx, uniqueID, r)
