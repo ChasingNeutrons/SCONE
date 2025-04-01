@@ -86,6 +86,8 @@ module eigenPhysicsPackage_class
     type(tallyAdmin),pointer               :: activeAtch    => null()
     class(uniFissSitesField),pointer       :: ufsField      => null()
 
+    ! Used for binning particles to see their positions
+    class(tallyMap), allocatable           :: map
 
     ! Settings
     integer(shortInt)  :: N_inactive
@@ -159,9 +161,10 @@ contains
     type(particle), save                      :: neutron
     type(particleState), save                 :: neutState
     real(defReal)                             :: k_old, k_new
-    real(defReal), dimension(:), allocatable  :: vec
+    real(defReal), dimension(:), allocatable  :: vec, vec0, array
     real(defReal)                             :: elapsed_T, end_T, T_toEnd
     integer(shortInt), save                   :: idx
+    character(nameLen)                        :: filename
     character(100),parameter :: Here ='cycles (eigenPhysicsPackage_class.f90)'
     !$omp threadprivate(neutron, buffer, collOp, transOp, pRNG, neutState, idx)
 
@@ -261,6 +264,25 @@ contains
             vec = resFM % eigVec
             print *,'Scaling fission neutron weight'
             ! Scale particle weights according to the eigenvector
+            ! First obtain the old fission weight distribution in the map
+            if (.not. allocated(vec0)) allocate(vec0(size(vec)))
+            vec0 = ZERO
+            !$omp parallel do
+            do n = 1, self % nextCycle % popSize()
+
+              call self % nextCycle % copy(neutron, n)
+              neutState = neutron
+              idx = self % fmMap % map(neutState)
+              if (idx > 0) then
+                !$omp atomic
+                vec0(idx) = vec0(idx) + neutState % wgt
+              end if
+
+            end do
+            !$omp end parallel do
+            vec0 = vec0 / sum(vec0)
+            print *, vec0
+
             !$omp parallel do
             do n = 1, self % nextCycle % popSize()
 
@@ -268,7 +290,7 @@ contains
               call self % nextCycle % copy(neutron, n)
               neutState = neutron
               idx = self % fmMap % map(neutState)
-              neutState % wgt = neutState % wgt * vec(idx)
+              neutState % wgt = neutState % wgt * vec(idx) / vec0(idx) 
               call self % nextCycle % replace(neutState, n)
 
             end do
@@ -281,14 +303,44 @@ contains
       end if
 
       ! Normalise population
-      call self % nextCycle % normSize(self % pop, self % pRNG)
-      ! Add to preserve total weight from one iteraiton to the next
+      call self % nextCycle % combing(self % pop, self % pRNG)
       call self % nextCycle % normWeight(real(self % pop,defReal))
+      !call self % nextCycle % combing(self % pop, self % pRNG)
+      ! Add to preserve total weight from one iteraiton to the next
 
-      if(self % printSource == 1) then
-        call self % nextCycle % printToFile(trim(self % outputFile)//'_source'//numToChar(i))
+      ! NOTE THIS FUNCTION HAS BEEN MODIFIED
+      ! Go through particles in the dungeon and map them, outputting the result
+      if(allocated(self % map)) then
+    
+        print *, self % nextCycle % popWeight()
+        filename = trim(self % outputFile)//'_source'//numToChar(i)//'.txt'
+        open(unit = 10, file = filename, status = 'new')
+
+        if (.not. allocated(array)) allocate(array(self % map % bins(0)))
+        array = ZERO
+
+        !$omp parallel do
+        do n = 1, self % nextCycle % popSize()
+
+          neutState = self % nextCycle % get(n)
+          idx = self % map % map(neutState)
+          if (idx > 0) then
+            !$omp atomic
+            array(idx) = array(idx) + neutState % wgt
+          end if
+
+        end do
+        !$omp end parallel do
+
+        do n = 1, self % map % bins(0)
+          write(10, *) array(n)
+        end do
+
+        ! Close the file
+        close(10)
+        !call self % nextCycle % printToFile(trim(self % outputFile)//'_source'//numToChar(i))
       end if
-
+      
       ! Flip cycle dungeons
       self % temp_dungeon => self % nextCycle
       self % nextCycle    => self % thisCycle
@@ -481,6 +533,12 @@ contains
 
     ! Read whether to print particle source per cycle
     call dict % getOrDefault(self % printSource, 'printSource', 0)
+
+    ! Read bins for FM output binning
+    if (dict % isPresent('particleBins')) then
+      tempDict => dict % getDictPtr('particleBins')
+      call new_tallyMap(self % map, tempDict)
+    end if
 
     ! Build Nuclear Data
     call ndReg_init(dict % getDictPtr("nuclearData"))

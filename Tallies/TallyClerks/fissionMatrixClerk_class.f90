@@ -261,6 +261,9 @@ contains
     print *,'Here it is'
     print *, self % eigVec
 
+    print *,'Matrix:'
+    print *, self % matrix
+
 
   end subroutine reportCycleEnd
   
@@ -272,16 +275,17 @@ contains
     class(fissionMatrixClerk), intent(inout) :: self
     real(defReal), dimension(:), allocatable :: b
     real(defReal)                            :: tol, err
-    integer(shortInt)                        :: it, i
+    integer(shortInt)                        :: it, i, itMax
     integer(shortInt), save                  :: j
     !$omp threadprivate(j)
 
-    tol = 1.0E-3
+    tol = 1.0E-6
     err = ONE
     it = 0
+    itMax = 200000
     allocate(b(self % N))
 
-    do it = 1, 1000 
+    do it = 1, itMax 
 
       b = self % eigVec 
       self % eigVec = ZERO
@@ -296,14 +300,14 @@ contains
       !$omp end parallel do
 
       ! Normalise appropriately
-      self % eigVec = self % eigVec / norm2(self % eigVec)
+      self % eigVec = self % eigVec / sum(self % eigVec)
       
-      err = norm2(self % eigVec - b) / norm2(self % eigVec)
+      err = sum(self % eigVec - b) / sum(self % eigVec)
       if (err < tol) exit
 
     end do
 
-    if (it >= 1000) print *,'FM iterations did not finish'
+    if (it >= itMax) print *,'FM iterations did not finish'
 
     self % eigVec = self % eigVec * sum(self % startWgt)
 

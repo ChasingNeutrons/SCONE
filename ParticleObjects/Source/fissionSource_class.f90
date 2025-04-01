@@ -181,9 +181,10 @@ contains
       rand3(3) = rand % get()
       
       ! Sample uniformly in space
+      !r = (self % top - self % bottom) * rand3 + self % bottom
+      ! ALTERNATIVELY:
       ! However, replace the x position with an indicator function sampling
       ! I do this for all here since it doesn't actually matter with y and z
-      !r = (self % top - self % bottom) * rand3 + self % bottom
       r = (self % top - self % bottom) * (0.2 * rand3 + 0.6) + self % bottom
 
       ! Find material under position

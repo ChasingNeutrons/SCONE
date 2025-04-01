@@ -86,6 +86,7 @@ module particleDungeon_class
     procedure  :: isEmpty
     procedure  :: normWeight
     procedure  :: normSize
+    procedure  :: combing
     procedure  :: cleanPop
     procedure  :: popSize
     procedure  :: popWeight
@@ -472,6 +473,59 @@ contains
 
   end subroutine normSize
 
+  subroutine combing(self, N, rand)
+    class(particleDungeon), intent(inout)    :: self
+    integer(shortInt), intent(in)            :: N
+    class(RNG), intent(inout)                :: rand
+    integer(shortInt)                        :: i, j
+    real(defReal)                            :: w_avg, nextTooth, curWeight
+    type(particleState), dimension(N)        :: newPrisoners
+    character(100), parameter :: Here =' combing (particleDungeon_class.f90)'
+
+
+    ! Protect against invalid N
+    if( N > size(self % prisoners)) then
+      call fatalError(Here,'Requested size: '//numToChar(N) //&
+                           'is greather then max size: '//numToChar(size(self % prisoners)))
+    else if ( N <= 0 ) then
+      call fatalError(Here,'Requested size: '//numToChar(N) //' is not +ve')
+    end if
+
+    ! Average particle weight
+    w_avg = self % popWeight() / N
+
+    ! First comb tooth
+    nextTooth = rand % get() * w_avg
+
+    curWeight = ZERO
+    j=1
+    do i=1, N
+      ! Iterate until accumulated weights of particles matches next tooth
+      do while (curWeight + self % prisoners(j) % wgt < nextTooth)
+        curWeight = curWeight + self % prisoners(j) % wgt
+        j = j + 1
+      end do
+
+
+      ! Particle to sample out
+      newPrisoners(i) = self % prisoners(j)
+      newPrisoners(i) % wgt = w_avg
+      nextTooth = nextTooth + w_avg
+    end do
+
+
+    ! Update size of particle dungeon
+    call self % setSize(N)
+
+
+    ! store sampled particles
+    do i=1, N
+      call self % replace_particleState(newPrisoners(i), i)
+    end do
+  end subroutine combing
+
+
+
   !!
   !! Reorder the dungeon so the brood ID is in the ascending order
   !!
@@ -631,5 +685,5 @@ contains
     close(10)
 
   end subroutine printToFile
-
+  
 end module particleDungeon_class
