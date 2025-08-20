@@ -300,14 +300,16 @@ contains
       !$omp end parallel do
 
       ! Normalise appropriately
-      self % eigVec = self % eigVec / sum(self % eigVec)
+      self % eigVec = self % eigVec / norm2(self % eigVec)
       
-      err = sum(self % eigVec - b) / sum(self % eigVec)
+      err = norm2(self % eigVec - b) / norm2(b)
       if (err < tol) exit
 
     end do
 
     if (it >= itMax) print *,'FM iterations did not finish'
+    print *,'Iterations: '
+    print *, it
 
     self % eigVec = self % eigVec * sum(self % startWgt)
 
