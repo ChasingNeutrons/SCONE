@@ -253,7 +253,7 @@ contains
       if (self % UFS) then
         call self % ufsField % updateMap()
       end if
-
+      
       ! Get the FM eigenvector and use it to scale particle weights
       if (self % doFM) then
         ! Obtain estimate of k_eff
@@ -281,6 +281,7 @@ contains
             end do
             !$omp end parallel do
             vec0 = vec0 / sum(vec0)
+            print *,'Initial weight distribution:'
             print *, vec0
 
             !$omp parallel do
@@ -305,7 +306,6 @@ contains
       ! Normalise population
       call self % nextCycle % combing(self % pop, self % pRNG)
       call self % nextCycle % normWeight(real(self % pop,defReal))
-      !call self % nextCycle % combing(self % pop, self % pRNG)
       ! Add to preserve total weight from one iteraiton to the next
 
       ! NOTE THIS FUNCTION HAS BEEN MODIFIED

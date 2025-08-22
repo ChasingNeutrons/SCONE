@@ -203,30 +203,29 @@ contains
     integer(shortInt)                   :: p, j
     integer(shortInt), save             :: i, idxOut, idxIn
     real(defReal), save                 :: normFactor
-    type(particleState), save           :: birthState
-    !$omp threadprivate(normFactor, birthState, i, idxOut, idxIn)
+    type(particleState), save           :: state, birthState
+    !$omp threadprivate(normFactor, birthState, i, idxOut, idxIn, state)
 
     ! Cycle through bank, identifying particle's birth and death position
     !$omp parallel do
     do p = 1, end % popSize()
 
-      associate(state => end % get(p))
-        idxOut = self % map % map(state)
-        birthState % r = state % rBirth
-        idxIn = self % map % map(birthState)
+      state = end % get(p)
+      idxOut = self % map % map(state)
+      birthState % r = state % rBirth
+      idxIn = self % map % map(birthState)
 
-        ! Score end weight
-        if (idxOut > 0) then
-          !$omp atomic
-          self % endWgt(idxOut) = self % endWgt(idxOut) + state % wgt
-        end if
+      ! Score end weight
+      if (idxOut > 0) then
+        !$omp atomic
+        self % endWgt(idxOut) = self % endWgt(idxOut) + state % wgt
+      end if
 
-        ! Score element of the matrix
-        if((idxOut > 0) .and. (idxIn > 0)) then
-          !$omp atomic
-          self % matrix(idxOut, idxIn) = self % matrix(idxOut,IdxIn) + state % wgt
-        end if
-      end associate
+      ! Score element of the matrix
+      if((idxOut > 0) .and. (idxIn > 0)) then
+        !$omp atomic
+        self % matrix(idxOut, idxIn) = self % matrix(idxOut,IdxIn) + state % wgt
+      end if
 
     end do
     !$omp end parallel do
@@ -248,17 +247,18 @@ contains
     ! Obtain the fission matrix eigenvector
     call self % solve()
 
+    ! THIS WAS BREAKING THINGS BADLY! WHY DID I HAVE IT????
     ! Modify the eigenvector to scale the dungeon weights
-    !$omp parallel do
-    do j = 1, self % N
-      normFactor = self % endWgt(j)
-      if (normFactor /= ZERO) normFactor = ONE / normFactor
-      self % eigVec(j) = self % eigVec(j) * normFactor
-    end do
-    !$omp end parallel do
+    !!$omp parallel do
+    !do j = 1, self % N
+    !  normFactor = self % endWgt(j)
+    !  if (normFactor /= ZERO) normFactor = ONE / normFactor
+    !  self % eigVec(j) = self % eigVec(j) * normFactor
+    !end do
+    !!$omp end parallel do
 
     self % eigVec = self % eigVec / sum(self % eigVec)
-    print *,'Here it is'
+    print *,'Eigenvector'
     print *, self % eigVec
 
     print *,'Matrix:'
@@ -275,15 +275,14 @@ contains
     class(fissionMatrixClerk), intent(inout) :: self
     real(defReal), dimension(:), allocatable :: b
     real(defReal)                            :: tol, err
-    integer(shortInt)                        :: it, i, itMax
-    integer(shortInt), save                  :: j
-    !$omp threadprivate(j)
+    integer(shortInt)                        :: it, i, j, itMax
 
     tol = 1.0E-6
     err = ONE
     it = 0
-    itMax = 200000
+    itMax = 10000
     allocate(b(self % N))
+    self % eigVec = ONE
 
     do it = 1, itMax 
 
@@ -291,19 +290,17 @@ contains
       self % eigVec = ZERO
 
       ! Matrix-vector multiply
-      !$omp parallel do
       do i = 1, self % N
         do j = 1, self % N
           self % eigVec(i) = self % eigVec(i) + self % matrix(i,j) * b(j)
         end do
       end do
-      !$omp end parallel do
 
       ! Normalise appropriately
       self % eigVec = self % eigVec / norm2(self % eigVec)
       
       err = norm2(self % eigVec - b) / norm2(b)
-      if (err < tol) exit
+      if (err < tol .and. it > 50) exit
 
     end do
 
