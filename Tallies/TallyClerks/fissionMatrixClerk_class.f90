@@ -26,6 +26,7 @@ module fissionMatrixClerk_class
   ! Tally Response
   use macroResponse_class,        only : macroResponse
 
+  use linearAlgebra_func,         only : eig
   implicit none
   private
 
@@ -86,6 +87,7 @@ module fissionMatrixClerk_class
 
     ! Solve for the FM eigenvector
     procedure  :: solve 
+    procedure  :: eigsolve 
 
   end type fissionMatrixClerk
 
@@ -245,7 +247,8 @@ contains
     !$omp end parallel do
 
     ! Obtain the fission matrix eigenvector
-    call self % solve()
+    !call self % solve()
+    call self % eigsolve()
 
     ! THIS WAS BREAKING THINGS BADLY! WHY DID I HAVE IT????
     ! Modify the eigenvector to scale the dungeon weights
@@ -277,7 +280,7 @@ contains
     real(defReal)                            :: tol, err
     integer(shortInt)                        :: it, i, j, itMax
 
-    tol = 1.0E-6
+    tol = 1.0E-7
     err = ONE
     it = 0
     itMax = 10000
@@ -300,7 +303,7 @@ contains
       self % eigVec = self % eigVec / norm2(self % eigVec)
       
       err = norm2(self % eigVec - b) / norm2(b)
-      if (err < tol .and. it > 50) exit
+      if (err < tol .and. it > 200) exit
 
     end do
 
@@ -311,6 +314,47 @@ contains
     self % eigVec = self % eigVec * sum(self % startWgt)
 
   end subroutine solve
+  
+  !!
+  !! Solve the fission matrix eigenvalue problem
+  !! using Lapack
+  !!
+  subroutine eigsolve(self)
+    class(fissionMatrixClerk), intent(inout) :: self
+    real(defReal), dimension(self % N) :: k
+    real(defReal), dimension(self % N, self % N) :: V
+    real(defReal)                             :: tol
+    integer(shortInt), dimension(1)           :: idx
+    integer(shortInt)                         :: inc
+    logical(defBool)                          :: isEnd, is_onehot
+    real(defReal), dimension(self % N)  :: vec0
+
+    !allocate(vec0(self % N))
+
+    tol = 1.0E-7
+    call eig(k, V, self % matrix)
+
+    idx = maxloc(k)
+    
+    ! Check to find the maximum eigenvalue: top or bottom?
+    isEnd = .false.
+    if (idx(1) == size(k)) isEnd = .true.
+
+    ! Test to make sure one doesn't have a dubious eigenvector with a single 1
+    vec0 = V(:,idx(1))
+    is_onehot = (count(abs(vec0) > tol) == 1) .and. (count(abs(vec0 - 1.0_defReal) < tol) == 1)
+
+    if (is_onehot) then
+      inc = 1
+      if (isEnd) inc = -1
+
+      vec0 = V(:,idx(1)+inc)
+
+    end if
+
+    self % eigVec = vec0
+
+  end subroutine eigsolve
 
   !!
   !! Return result from the clerk for interaction with Physics Package
