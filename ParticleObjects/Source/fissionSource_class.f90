@@ -154,7 +154,7 @@ contains
     type(fissionCE), pointer             :: fissCE
     type(fissionMG), pointer             :: fissMG
     real(defReal), dimension(3)          :: r, rand3
-    real(defReal)                        :: mu, phi, E_out, E_up, E_down
+    real(defReal)                        :: mu, phi, E_out, E_up, E_down, rand1
     integer(shortInt)                    :: matIdx, uniqueID, nucIdx, i, G_out
     character(100), parameter :: Here = 'sampleParticle (fissionSource_class.f90)'
 
@@ -179,13 +179,21 @@ contains
       rand3(1) = rand % get()
       rand3(2) = rand % get()
       rand3(3) = rand % get()
+      rand1 = rand % get()
       
       ! Sample uniformly in space
       !r = (self % top - self % bottom) * rand3 + self % bottom
       ! ALTERNATIVELY:
       ! However, replace the x position with an indicator function sampling
       ! I do this for all here since it doesn't actually matter with y and z
-      r = (self % top - self % bottom) * (0.2 * rand3 + 0.6) + self % bottom
+      !r = (self % top - self % bottom) * (0.2 * rand3 + 0.6) + self % bottom
+
+      ! Sample from a slope
+      if (rand1 < 0.5) then
+        r = self % bottom + (self % top - self % bottom) * sqrt(rand3)
+      else
+        r = 0.35 * (self % top - self % bottom) + self % bottom
+      endif
 
       ! Find material under position
       call self % geom % whatIsAt(matIdx, uniqueID, r)

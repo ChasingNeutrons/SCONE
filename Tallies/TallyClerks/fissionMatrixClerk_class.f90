@@ -264,8 +264,8 @@ contains
     print *,'Eigenvector'
     print *, self % eigVec
 
-    print *,'Matrix:'
-    print *, self % matrix
+    !print *,'Matrix:'
+    !print *, self % matrix
 
 
   end subroutine reportCycleEnd
@@ -323,34 +323,71 @@ contains
     class(fissionMatrixClerk), intent(inout) :: self
     real(defReal), dimension(self % N) :: k
     real(defReal), dimension(self % N, self % N) :: V
-    real(defReal)                             :: tol
+    real(defReal)                             :: tol, tol_sign
     integer(shortInt), dimension(1)           :: idx
-    integer(shortInt)                         :: inc
-    logical(defBool)                          :: isEnd, is_onehot
-    real(defReal), dimension(self % N)  :: vec0
+    logical(defBool)                          :: is_onehot, found_onehot, found_good
+    real(defReal), dimension(self % N)        :: vec0
+    integer(shortInt)                         :: n, j, i, kHot
+    character(100),parameter :: Here ='eigsolve (fissionMatrixClerk_class.f90)'
 
-    !allocate(vec0(self % N))
-
-    tol = 1.0E-7
+    tol_sign = 1.0e-5_defReal  ! tolerance for "wrong sign" entries
+    tol = 1.0E-6_defReal
     call eig(k, V, self % matrix)
 
-    idx = maxloc(k)
-    
-    ! Check to find the maximum eigenvalue: top or bottom?
-    isEnd = .false.
-    if (idx(1) == size(k)) isEnd = .true.
+    n = self % N
+    j = 0
 
-    ! Test to make sure one doesn't have a dubious eigenvector with a single 1
-    vec0 = V(:,idx(1))
-    is_onehot = (count(abs(vec0) > tol) == 1) .and. (count(abs(vec0 - 1.0_defReal) < tol) == 1)
+    found_onehot = .false.
+    found_good = .false.
+    ! Loop until usable eigenpair
+    do j = 1, N
+      idx = maxloc(k, dim=1)
+      vec0 = V(:,idx(1))
 
-    if (is_onehot) then
-      inc = 1
-      if (isEnd) inc = -1
+      ! Remove this eigenvalue from pool
+      k(idx(1)) = -huge(1.0_defReal)
 
-      vec0 = V(:,idx(1)+inc)
+      ! One-hot check
+      is_onehot = (count(abs(vec0) > tol) == 1) .and. (count(abs(vec0 - 1.0_defReal) < tol) == 1)
+      if (is_onehot .and. .not. found_onehot) kHot = idx(1)
+      found_onehot = found_onehot .or. is_onehot
 
-    end if
+      print *, j
+      print *, vec0
+      if (is_onehot) cycle   ! skip one-hot eigenvectors
+
+      ! --- Robust sign check ---
+      ! Flip vector if its sum is negative
+      if (sum(vec0) < 0.0_defReal) vec0 = -vec0
+
+      ! Case 1: everything >= -tol_sign → accept after zeroing
+      if (all(vec0 >= -tol_sign)) then
+        do i = 1,n
+          if (vec0(i) < 0.0_defReal .and. abs(vec0(i)) < tol_sign) vec0(i) = 0.0_defReal
+        end do
+        found_good = .true.
+        exit
+      else
+        ! Too inconsistent, try next eigenpair
+        if (all(k == -huge(1.0_defReal))) then
+          call fatalError(Here,'No good eigenpairs!!!')
+        end if
+        cycle
+      end if
+
+    end do
+
+    print *,'Matrix:'
+    print *, self % matrix
+
+    if ((.not. found_good) .and. found_onehot) then
+      vec0 = V(:,kHot)
+    elseif ((.not. found_good) .and. (.not. found_onehot)) then
+      call fatalError(Here,'FUCK')
+    end if 
+
+    if (any(vec0 /= vec0)) call fatalError(Here,'NaN eigenvector')
+    if (any(self % matrix /= self % matrix)) call fatalError(Here,'NaN matrix')
 
     self % eigVec = vec0
 
