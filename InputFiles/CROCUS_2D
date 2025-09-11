@@ -31,6 +31,9 @@ activeTally {
                   emap {type energyMap; grid unstruct; bins (1.0E-11 0.625E-6 20); }
                 }
               } 
+  XSs  { type mgXsClerk; PN 0; spaceMap {type materialMap; materials (water uo2 umet clad);}
+                         energyMap {type energyMap; grid predef; name wims69; }
+       } 
 }
 
 geometry {
