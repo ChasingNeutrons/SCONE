@@ -5,7 +5,7 @@
 type eigenPhysicsPackage;
 
 pop      100000;
-active   500;
+active   2000;
 inactive 100;
 XSdata ce;
 dataType ce;
