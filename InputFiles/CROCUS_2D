@@ -5,7 +5,7 @@
 type eigenPhysicsPackage;
 
 pop      100000;
-active   2000;
+active   4000;
 inactive 100;
 XSdata ce;
 dataType ce;
@@ -24,16 +24,36 @@ transportOperator {// type transportOperatorST;
 inactiveTally {}
 
 activeTally {
-  fluxRadial  { type collisionClerk; response (flx); flx { type fluxResponse;}
-                map {type multiMap; maps (xax yax emap);
-                  xax {type spaceMap;  axis x;  grid lin; N 240; min -60.0; max 60.0; }
-                  yax {type spaceMap;  axis y;  grid lin; N 240; min -60.0; max 60.0; }
-                  emap {type energyMap; grid unstruct; bins (1.0E-11 0.625E-6 20); }
-                }
-              } 
+  !fluxRadial  { type collisionClerk; response (flx); flx { type fluxResponse;}
+  !              map {type multiMap; maps (xax yax emap);
+  !                xax {type spaceMap;  axis x;  grid lin; N 240; min -60.0; max 60.0; }
+  !                yax {type spaceMap;  axis y;  grid lin; N 240; min -60.0; max 60.0; }
+  !                emap {type energyMap; grid unstruct; bins (1.0E-11 0.625E-6 20); }
+  !              }
+  !            } 
   XSs  { type mgXsClerk; PN 0; spaceMap {type materialMap; materials (water uo2 umet clad);}
                          energyMap {type energyMap; grid predef; name wims69; }
        } 
+  reacTotal {type collisionClerk; response (fiss cap); 
+             fiss {type macroResponse; MT -6;}
+             cap {type macroResponse; MT -2;}
+            }
+  fissUO2 {type collisionClerk; response (fiss); 
+             fiss {type macroResponse; MT -6;}
+             map {type multiMap; maps (xax yax mat);
+                  xax {type spaceMap; axis x; grid lin; min -20.207; max 20.207; N 22;}   
+                  yax {type spaceMap; axis y; grid lin; min -20.207; max 20.207; N 22;}   
+                  mat {type materialMap; materials (uo2);}
+                 }
+          }
+  fissUMet {type collisionClerk; response (fiss); 
+             fiss {type macroResponse; MT -6;}
+             map {type multiMap; maps (xax yax mat);
+                  xax {type spaceMap; axis x; grid lin; min -29.17; max 29.17; N 20;}   
+                  yax {type spaceMap; axis y; grid lin; min -29.17; max 29.17; N 20;}   
+                  mat {type materialMap; materials (umet);}
+                 }
+           }
 }
 
 geometry {

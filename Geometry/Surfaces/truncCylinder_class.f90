@@ -369,10 +369,10 @@ contains
     integer(shortInt)                           :: i
     character(100),parameter :: Here = 'setBC (truncCylinder_inter.f90)'
 
-    if(size(BC) < 2) call fatalError(Here,'Wrong size of BC string. Must be at least 2')
+    if(size(BC) < 6) call fatalError(Here,'Wrong size of BC string. Must be at least 2')
 
     ! Load BC codes
-    self % BC = BC(1:2)
+    self % BC = BC((self % axis*2-1):(self % axis*2))
 
     ! Verify that all BC flags make sense
     do i = 1, 2

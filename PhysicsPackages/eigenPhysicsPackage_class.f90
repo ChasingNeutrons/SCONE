@@ -236,6 +236,7 @@ contains
 
       end do gen
       !$omp end parallel do
+      call timerStop(self % timerParticle)
 
       call self % thisCycle % cleanPop()
 

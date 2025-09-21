@@ -167,8 +167,9 @@ module arraysRR_class
     procedure :: getCellPos
     procedure :: wasHit
     procedure :: getCellHitRate
-    procedure :: getSimulationType
     procedure :: wasFound
+    procedure :: getFound
+    procedure :: getSimulationType
     procedure :: hasFixedSource
     procedure :: getFluxAtAPoint
     
@@ -994,6 +995,17 @@ contains
   end subroutine newFound
 
   !!
+  !! Return number of cells found
+  !!
+  function getFound(self) result(n)
+    class(arraysRR), intent(in) :: self
+    integer(shortInt)           :: n
+
+    n = count(self % cellTotalHit > 0)
+
+  end function getFound
+
+  !!
   !! Return number of energy groups used
   !!
   elemental function getNG(self) result(nG)
@@ -1091,6 +1103,7 @@ contains
     
     !$omp parallel do 
     cellLoop: do cIdx = 1, self % nCells
+      if (.not. self % wasFound(cIdx)) cycle cellLoop
       matIdx = self % geom % geom % graph % getMatFromUID(cIdx) 
       
       hit = self % wasHit(cIdx)
@@ -1226,7 +1239,8 @@ contains
 
 
     !$omp parallel do schedule(static)
-    do cIdx = 1, self % nCells
+    cellLoop: do cIdx = 1, self % nCells
+      if (.not. self % wasFound(cIdx)) cycle cellLoop
       matIdx =  self % geom % geom % graph % getMatFromUID(cIdx)
       dIdx = (cIdx - 1) * nDim
       mIdx = (cIdx - 1) * matSize
@@ -1415,7 +1429,7 @@ contains
 
       end do groupLoop
 
-    end do
+    end do cellLoop
     !$omp end parallel do
 
   end subroutine normaliseFluxAndVolumeLinearIso
@@ -1442,12 +1456,16 @@ contains
   end subroutine normaliseFluxAndVolumeLIFA
   
   !!
-  !! Update all sources given a prevFlux
+  !! Update all sources given a prevFlux.
+  !! Uses ONE_KEFF to scale the fission source.
+  !! Uses it to check whether cells which have never been hit
+  !! can be neglected.
   !! This nesting allows using combined OMP + SIMD
   !!
-  subroutine updateSource(self, ONE_KEFF)
+  subroutine updateSource(self, ONE_KEFF, it)
     class(arraysRR), intent(inout) :: self
     real(defReal), intent(in)      :: ONE_KEFF
+    integer(shortInt), intent(in)  :: it
     real(defFlt)                   :: ONE_K
     integer(shortInt)              :: cIdx
     character(100), parameter      :: Here = 'updateSource (arraysRR_class.f90)'
@@ -1458,13 +1476,13 @@ contains
       case(flatIso)
         !$omp parallel do 
         do cIdx = 1, self % nCells
-          call self % sourceUpdateKernelFlatIso(cIdx, ONE_K)
+          call self % sourceUpdateKernelFlatIso(cIdx, ONE_K, it)
         end do
         !$omp end parallel do
       case(linearIso)
         !$omp parallel do 
         do cIdx = 1, self % nCells
-          call self % sourceUpdateKernelLinearIso(cIdx, ONE_K)
+          call self % sourceUpdateKernelLinearIso(cIdx, ONE_K, it)
         end do
         !$omp end parallel do
       case default
@@ -1476,20 +1494,25 @@ contains
   !!
   !! Kernel to update sources given a cell index
   !!
-  subroutine sourceUpdateKernelFlatIso(self, cIdx, ONE_KEFF)
+  subroutine sourceUpdateKernelFlatIso(self, cIdx, ONE_KEFF, it)
     class(arraysRR), target, intent(inout)   :: self
     integer(shortInt), intent(in)            :: cIdx
     real(defFlt), intent(in)                 :: ONE_KEFF
+    integer(shortInt), intent(in)            :: it
+    logical(defBool)                         :: notFound
     real(defFlt)                             :: scatter, fission
     real(defFlt), dimension(self % nG)       :: fluxFlt
     real(defFlt), dimension(:), pointer      :: nuFission, chi, scatterXS, scatterVec
     integer(shortInt)                        :: matIdx, g, gIn, baseIdx, idx, sIdx1, sIdx2
 
+
     ! Identify material
     matIdx = self % geom % geom % graph % getMatFromUID(cIdx) 
     
     ! Guard against void cells
-    if (matIdx > self % XSData % getNMat()) then
+    ! Also check whether cell has even been visited
+    notFound = (it > 1 .and. .not. self % wasFound(cIdx))
+    if (matIdx > self % XSData % getNMat() .or. notFound) then
       baseIdx = self % nG * (cIdx - 1)
       do g = 1, self % nG
         idx = baseIdx + g
@@ -1544,10 +1567,12 @@ contains
   !! Kernel to update sources given a cell index for linear sources
   !! with isotropic scattering
   !!
-  subroutine sourceUpdateKernelLinearIso(self, cIdx, ONE_KEFF)
+  subroutine sourceUpdateKernelLinearIso(self, cIdx, ONE_KEFF, it)
     class(arraysRR), target, intent(inout)  :: self
     integer(shortInt), intent(in)           :: cIdx
     real(defFlt), intent(in)                :: ONE_KEFF
+    integer(shortInt), intent(in)           :: it
+    logical(defBool)                        :: notFound
     real(defFlt)                            :: scatter, xScatter, yScatter, zScatter, &
                                                fission, xFission, yFission, zFission, &
                                                xSource, ySource, zSource
@@ -1556,14 +1581,13 @@ contains
     real(defFlt), dimension(:), pointer     :: nuFission, chi, scatterXS, scatterVec
     integer(shortInt)                       :: matIdx, g, gIn, baseIdx, idx, sIdx1, sIdx2
 
-    ! Invert moment matrix
-    invM = self % invertMatrix(cIdx)
-    
     ! Identify material
     matIdx = self % geom % geom % graph % getMatFromUID(cIdx)
     
     ! Guard against void cells
-    if (matIdx > self % XSData % getNMat()) then
+    ! Also check whether cell has even been visited
+    notFound = (it > 1 .and. .not. self % wasFound(cIdx))
+    if (matIdx > self % XSData % getNMat() .or. notFound) then
       baseIdx = self % nG * (cIdx - 1)
       do g = 1, self % nG
         idx = baseIdx + g
@@ -1577,6 +1601,9 @@ contains
       end do
       return
     end if
+    
+    ! Invert moment matrix
+    invM = self % invertMatrix(cIdx)
      
     ! Obtain XSs
     call self % XSData % getProdPointers(matIdx, nuFission, scatterXS, chi)
@@ -1818,7 +1845,7 @@ contains
     if (.not. self % XSData % isFissile(matIdx)) return
     if (.not. self % wasFound(cIdx)) return
     vol = self % volume(cIdx)
-    if (vol < volume_tolerance) return
+    !if (vol < volume_tolerance) return
 
     call self % XSData % getNuFissPointer(matIdx, nuSigmaF)
     flux => self % scalarFlux((self % nG * (cIdx - 1) + 1):(self % nG * cIdx))
@@ -1892,29 +1919,29 @@ contains
     class(arraysRR), intent(inout) :: self
     integer(shortInt)              :: idx
 
-    !$omp parallel do schedule(static)
+    !$omp parallel do
     do idx = 1, size(self % scalarFlux)
       self % prevFlux(idx) = self % scalarFlux(idx)
       self % scalarFlux(idx) = ZERO
     end do
     !$omp end parallel do
     
-    !$omp parallel do schedule(static)
-    do idx = 1, size(self % scalarFlux)
+    !$omp parallel do
+    do idx = 1, size(self % scalarX)
       self % prevX(idx) = self % scalarX(idx)
       self % scalarX(idx) = ZERO
     end do
     !$omp end parallel do
     
-    !$omp parallel do schedule(static)
-    do idx = 1, size(self % scalarFlux)
+    !$omp parallel do
+    do idx = 1, size(self % scalarY)
       self % prevY(idx) = self % scalarY(idx)
       self % scalarY(idx) = ZERO
     end do
     !$omp end parallel do
     
-    !$omp parallel do schedule(static)
-    do idx = 1, size(self % scalarFlux)
+    !$omp parallel do
+    do idx = 1, size(self % scalarZ)
       self % prevZ(idx) = self % scalarZ(idx)
       self % scalarZ(idx) = ZERO
     end do
@@ -1929,14 +1956,6 @@ contains
   !!
   subroutine resetFluxesFlatAni(self)
     class(arraysRR), intent(inout) :: self
-    integer(shortInt)              :: idx
-
-    !$omp parallel do schedule(static)
-    do idx = 1, size(self % scalarFlux)
-      self % prevFlux(idx) = self % scalarFlux(idx)
-      self % scalarFlux(idx) = ZERO
-    end do
-    !$omp end parallel do
 
   end subroutine resetFluxesFlatAni
   
@@ -1947,14 +1966,6 @@ contains
   !!
   subroutine resetFluxesLIFA(self)
     class(arraysRR), intent(inout) :: self
-    integer(shortInt)              :: idx
-
-    !$omp parallel do schedule(static)
-    do idx = 1, size(self % scalarFlux)
-      self % prevFlux(idx) = self % scalarFlux(idx)
-      self % scalarFlux(idx) = ZERO
-    end do
-    !$omp end parallel do
 
   end subroutine resetFluxesLIFA
 
@@ -2066,6 +2077,7 @@ contains
     !$omp parallel do
     do i = 1, self % nCells
 
+      if (.not. self % wasFound(i)) cycle
       vol = self % getVolume(i)
       pos = self % getCellPos(i)
       call p % teleport(pos)

@@ -454,7 +454,7 @@ contains
       end if
       it = itInac + itAct
       
-      call arrayPtr % updateSource(ONE_KEFF)
+      call arrayPtr % updateSource(ONE_KEFF, it)
 
       ! Reset and start transport timer
       call timerReset(self % timerTransport)
@@ -591,6 +591,9 @@ contains
 
     name = 'Hit_rate'
     call out % printValue(self % arrays % getAverageHitRate(),name)
+    
+    name = 'Number_of_meshes'
+    call out % printValue(self % arrays % getFound(),name)
     
     ! Print tally
     if (associated(self % tally)) then
