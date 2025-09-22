@@ -415,7 +415,7 @@ contains
       it = itInac + itAct
       
       ONE_KEFF = ONE / self % keff
-      call arrayPtr % updateSource(ONE_KEFF)
+      call arrayPtr % updateSource(ONE_KEFF, it)
 
       ! Reset and start transport timer
       call timerReset(self % timerTransport)
@@ -461,10 +461,6 @@ contains
       ! Accumulate flux scores and tally results
       if (isActive) then
         call arrayPtr % accumulateFluxScores()
-        if (associated(self % tally)) then
-          call arrayPtr % tallyResults(self % tally)
-          call self % tally % reportCycleEnd(dummyDungeon)
-        end if
       end if
 
       ! Calculate proportion of cells that were hit
@@ -525,6 +521,13 @@ contains
     self % keffScore(2) = self % keffScore(2) * N1
     self % keffScore(2) = sqrt(Nm1*(self % keffScore(2) - &
             self % keffScore(1) * self % keffScore(1))) 
+    
+    ! Could be called during cycles but is quite slow
+    ! Until performance improvements, it will stay here    
+    if (associated(self % tally)) then
+      call arrayPtr % tallyResults(self % tally)
+      call self % tally % reportCycleEnd(dummyDungeon)
+    end if
 
   end subroutine cycles
 
@@ -570,6 +573,9 @@ contains
     name = 'Hit_rate'
     call out % printValue(self % arrays % getAverageHitRate(),name)
 
+    name = 'Number_of_meshes'
+    call out % printValue(self % arrays % countFound(),name)
+    
     ! Print keff
     name = 'keff'
     call out % startBlock(name)

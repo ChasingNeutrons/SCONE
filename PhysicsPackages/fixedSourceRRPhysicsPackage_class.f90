@@ -493,10 +493,6 @@ contains
       ! Accumulate flux scores and tally results
       if (isActive) then
         call arrayPtr % accumulateFluxScores()
-        if (associated(self % tally)) then
-          call arrayPtr % tallyResults(self % tally)
-          call self % tally % reportCycleEnd(dummyDungeon)
-        end if
       end if
 
       ! Calculate proportion of cells that were hit
@@ -544,8 +540,13 @@ contains
 
     end do
 
-    ! Finalise flux and keff scores
+    ! Finalise flux and scores
     call arrayPtr % finaliseFluxScores(itAct)
+        
+    if (associated(self % tally)) then
+      call arrayPtr % tallyResults(self % tally)
+      call self % tally % reportCycleEnd(dummyDungeon)
+    end if
 
   end subroutine cycles
 
@@ -593,7 +594,7 @@ contains
     call out % printValue(self % arrays % getAverageHitRate(),name)
     
     name = 'Number_of_meshes'
-    call out % printValue(self % arrays % getFound(),name)
+    call out % printValue(self % arrays % countFound(),name)
     
     ! Print tally
     if (associated(self % tally)) then

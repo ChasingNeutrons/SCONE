@@ -5,4 +5,5 @@ add_sources( ./arraysRR_class.f90
 	     ./dataRR_class.f90
 	     ./mathsRR_func.f90
 	     ./constantsRR.f90
+	     ./cellRR_class.f90
              )

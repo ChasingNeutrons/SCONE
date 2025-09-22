@@ -391,10 +391,10 @@ contains
   !! Get scatter pointer
   !!
   subroutine getScatterPointer(self, matIdx, sigS)
-    class(dataRR), target, intent(in)                :: self
-    integer(shortInt), intent(in)                    :: matIdx
-    real(defFlt), dimension(:), pointer, intent(out) :: sigS
-    integer(shortInt)                                :: idx1, idx2, mIdx
+    class(dataRR), target, intent(in)                            :: self
+    integer(shortInt), intent(in)                                :: matIdx
+    real(defFlt), dimension(:), pointer, contiguous, intent(out) :: sigS
+    integer(shortInt)                                            :: idx1, idx2, mIdx
 
     if (matIdx > self % nMat) then
       mIdx = self % nMat + 1
@@ -410,11 +410,11 @@ contains
   !! Get scatter vector pointer
   !!
   subroutine getScatterVecPointer(self, matIdx, gOut, sigS)
-    class(dataRR), target, intent(in)                :: self
-    integer(shortInt), intent(in)                    :: matIdx
-    integer(shortInt), intent(in)                    :: gOut
-    real(defFlt), dimension(:), pointer, intent(out) :: sigS
-    integer(shortInt)                                :: idx1, idx2, mIdx
+    class(dataRR), target, intent(in)                            :: self
+    integer(shortInt), intent(in)                                :: matIdx
+    integer(shortInt), intent(in)                                :: gOut
+    real(defFlt), dimension(:), pointer, contiguous, intent(out) :: sigS
+    integer(shortInt)                                            :: idx1, idx2, mIdx
 
     if (matIdx > self % nMat) then
       mIdx = self % nMat + 1
@@ -432,10 +432,10 @@ contains
   !! Get chi pointer
   !!
   subroutine getChiPointer(self, matIdx, chi)
-    class(dataRR), target, intent(in)                :: self
-    integer(shortInt), intent(in)                    :: matIdx
-    real(defFlt), dimension(:), pointer, intent(out) :: chi
-    integer(shortInt)                                :: idx1, idx2, mIdx
+    class(dataRR), target, intent(in)                            :: self
+    integer(shortInt), intent(in)                                :: matIdx
+    real(defFlt), dimension(:), pointer, contiguous, intent(out) :: chi
+    integer(shortInt)                                            :: idx1, idx2, mIdx
 
     if (matIdx > self % nMat) then
       mIdx = self % nMat + 1
@@ -452,10 +452,10 @@ contains
   !! This is done for a given material, across all energies
   !!
   subroutine getProdPointers(self, matIdx, nuSigF, sigS, chi)
-    class(dataRR), target, intent(in)                :: self
-    integer(shortInt), intent(in)                    :: matIdx
-    real(defFlt), dimension(:), pointer, intent(out) :: nuSigF, sigS, chi
-    integer(shortInt)                                :: idx1, idx2, idx1s, idx2s, mIdx
+    class(dataRR), target, intent(in)                            :: self
+    integer(shortInt), intent(in)                                :: matIdx
+    real(defFlt), dimension(:), pointer, contiguous, intent(out) :: nuSigF, sigS, chi
+    integer(shortInt)                                            :: idx1, idx2, idx1s, idx2s, mIdx
 
     if (matIdx > self % nMat) then
       mIdx = self % nMat + 1
@@ -475,10 +475,10 @@ contains
   !! This is done for a given material, across all energies
   !!
   subroutine getTotalPointer(self, matIdx, sigT)
-    class(dataRR), target, intent(in)                :: self
-    integer(shortInt), intent(in)                    :: matIdx
-    real(defFlt), dimension(:), pointer, intent(out) :: sigT
-    integer(shortInt)                                :: idx1, idx2, mIdx
+    class(dataRR), target, intent(in)                            :: self
+    integer(shortInt), intent(in)                                :: matIdx
+    real(defFlt), dimension(:), pointer, contiguous, intent(out) :: sigT
+    integer(shortInt)                                            :: idx1, idx2, mIdx
 
     if (matIdx > self % nMat) then
       mIdx = self % nMat + 1
@@ -495,10 +495,10 @@ contains
   !! This is done for a given material, across all energies
   !!
   subroutine getNuFissPointer(self, matIdx, nuFiss)
-    class(dataRR), target, intent(in)                :: self
-    integer(shortInt), intent(in)                    :: matIdx
-    real(defFlt), dimension(:), pointer, intent(out) :: nuFiss
-    integer(shortInt)                                :: idx1, idx2, mIdx
+    class(dataRR), target, intent(in)                            :: self
+    integer(shortInt), intent(in)                                :: matIdx
+    real(defFlt), dimension(:), pointer, contiguous, intent(out) :: nuFiss
+    integer(shortInt)                                            :: idx1, idx2, mIdx
 
     if (matIdx > self % nMat) then
       mIdx = self % nMat + 1
