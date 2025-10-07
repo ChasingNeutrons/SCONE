@@ -7,7 +7,8 @@ module mathsRR_func
   !! I believe this originates from the M&C 2019 publication:
   !! "Adding a third level of parallelism to OpenMOC"
   !!
-  !! TODO: Add functions for efficient spherical harmonics evaluation.
+  !! Second it has a subroutine for producing all necessary spherical
+  !! harmonic moments evaluations.
   !!
 
   use numPrecision
@@ -15,8 +16,18 @@ module mathsRR_func
 
   implicit none
   private
+
   
-  public :: expF1, expF1Tau, expG, expG2
+  public :: expF1, expF1Tau, expG, expG2, sphericalHarmonics
+  
+  ! Factors for spherical harmonics
+  real(defFlt), parameter :: SQRT3 = sqrt(3._defFlt), &
+                             SQRT5_2 = sqrt(5._defFlt) / 2.0_defFlt, &
+                             SQRT15_2 = sqrt(15._defFlt) / 2.0_defFlt, & 
+                             SQRT70_4 = sqrt(70._defFlt)/4._defFlt, &
+                             SQRT105 = sqrt(105._defFlt), &
+                             SQRT42_4 = sqrt(42._defFlt)/4._defFlt, &
+                             SQRT7_2 = sqrt(7._defFlt)/2._defFlt
 
   ! Numerator coefficients in F1 rational approximation
   real(defFlt), parameter :: c1n = -1.0000013559236386308, c2n = 0.23151368626911062025,&
@@ -170,5 +181,66 @@ contains
     x = num / den
 
   end function expG2
+  
+  !!
+  !! Produce spherical harmonic functions given a direction
+  !!
+  subroutine sphericalHarmonics(dir, P)
+    real(defFlt), dimension(:), intent(inout) :: P
+    real(defReal), dimension(3), intent(in)   :: dir
+    integer(shortInt)                         :: n
+    real(defFlt)                              :: dirX, dirY, dirZ
+    character(nameLen), parameter             :: Here = 'sphericalHarmonics (mathsRR_class.f90)'
+
+    n = size(P)
+
+    dirX = real(dir(1), defFlt)
+    dirY = real(dir(2), defFlt)
+    dirZ = real(dir(3), defFlt)
+
+    ! The size of P can only take on certain allowable values, corresponding to the spherical
+    ! harmonics order
+    select case(n)
+    case(1)  
+      P(1) = 1.0_defFlt 
+
+    case(4)  
+      P(1) = 1.0_defFlt 
+      P(2) = SQRT3 * dirY
+      P(3) = SQRT3 * dirZ
+      P(4) = SQRT3 * dirX
+
+    case(9) 
+      P(1) = 1.0_defFlt 
+      P(2) = SQRT3 * dirY
+      P(3) = SQRT3 * dirZ
+      P(4) = SQRT3 * dirZ
+      P(5) = SQRT15_2 * dirX * dirY
+      P(6) = SQRT15_2 * dirZ * dirY
+      P(7) = SQRT5_2 * (3 * dirZ*dirZ - 1)
+      P(8) = SQRT15_2 * dirX * dirZ
+      P(9) = SQRT15_2 * (dirX*dirX - dirY*dirY)
+
+    case(16) 
+      P(1) = 1.0_defFlt 
+      P(2) = SQRT3 * dirY
+      P(3) = SQRT3 * dirZ
+      P(4) = SQRT3 * dirX
+      P(5) = SQRT15_2 * dirX * dirY
+      P(6) = SQRT15_2 * dirZ * dirY
+      P(7) = SQRT5_2 * (3 * dirZ*dirZ - 1)
+      P(8) = SQRT15_2 * dirX * dirZ
+      P(9) = SQRT15_2 * (dirX*dirX - dirY*dirY) 
+      P(10) = SQRT70_4 * dirY * (3 * dirX*dirX - dirY*dirY)
+      P(11) = SQRT105 * dirZ * dirX * dirY
+      P(12) = SQRT42_4 * dirY * (5 * dirZ*dirZ - 1)
+      P(13) = SQRT7_2 * dirZ * (5 * dirZ*dirZ - 3)
+      P(14) = SQRT42_4 * dirX * (5 * dirZ*dirZ - 1)
+      P(15) = SQRT105 * dirZ * (dirX*dirX - dirY*dirY)
+      P(16) = SQRT70_4 * dirX * (dirX*dirX - 3 * dirY*dirY)
+    case default
+      call fatalError(Here, 'Invalid spherical harmonic order requested.')
+    end select
+  end subroutine sphericalHarmonics
     
 end module mathsRR_func

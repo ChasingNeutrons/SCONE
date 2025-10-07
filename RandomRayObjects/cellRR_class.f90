@@ -54,20 +54,15 @@ module cellRR_class
   !!
   type, public :: cellRR
     
-    ! Data is ordered  in terms of frequency of access during the sweep
+    ! Data is ordered  in terms of frequency of access during the sweep for speed
     ! Geometry info
-    logical(defBool)  :: cellHit = .false.
-    integer(longInt)  :: cellTotalHit = 0
-    logical(defBool)  :: cellFound = .false.
-    
-    ! Flux arrays
-    real(defFlt), dimension(:), allocatable :: source
-    
-    ! OMP lock
-    integer(kind=omp_lock_kind) :: lock
-    real(defReal)               :: volumeTracks = ZERO
-    
+    logical(defBool)                         :: cellFound = .false.
+    real(defFlt), dimension(:), allocatable  :: source
+    integer(kind=omp_lock_kind)              :: lock
     real(defReal), dimension(:), allocatable :: scalarFlux
+    real(defReal)                            :: volumeTracks = ZERO
+    logical(defBool)                         :: cellHit = .false.
+    integer(longInt)                         :: cellTotalHit = 0
     
     ! Linear source arrays
     real(defFlt), dimension(:), allocatable   :: sourceX
@@ -139,10 +134,8 @@ module cellRR_class
     procedure :: getFluxMomentPointers
 
     ! Predominantly for use in the transport sweep
-    procedure :: incrementVolume
-    procedure :: incrementCentroid
-    procedure :: incrementMoments
-    procedure :: hitCell
+    procedure :: hitCellFS
+    procedure :: hitCellLS
     procedure :: unhitCell
     procedure :: newFound
     procedure :: setLock
@@ -542,44 +535,6 @@ contains
   end function getMomentMatrix
   
   !!
-  !! Increment the local volume estimate.
-  !! Assumes this is being called inside a lock for thread privacy.
-  !!
-  subroutine incrementVolume(self, length)
-    class(cellRR), intent(inout) :: self
-    real(defReal), intent(in)    :: length     
-    
-    self % volumeTracks = self % volumeTracks + length
-  
-  end subroutine incrementVolume
-  
-  !!
-  !! Increment the local centroid estimate.
-  !! rL is the tracklength-weighted centroid
-  !! Assumes this is being called inside a lock for thread privacy.
-  !!
-  subroutine incrementCentroid(self, rL)
-    class(cellRR), intent(inout)               :: self
-    real(defReal), dimension(nDim), intent(in) :: rL
-
-    self % centroidTracks = self % centroidTracks + rL
-
-  end subroutine incrementCentroid
-  
-  !!
-  !! Increment the local moment matrix estimate.
-  !! mat is the tracklength-weighted matrix
-  !! Assumes this is being called inside a lock for thread privacy.
-  !!
-  subroutine incrementMoments(self, mat)
-    class(cellRR), intent(inout)                  :: self
-    real(defReal), dimension(matSize), intent(in) :: mat
-
-    self % momTracks = self % momTracks + mat
-  
-  end subroutine incrementMoments
- 
-  !!
   !! Check if a cell has been hit
   !!
   elemental function wasHit(self) result (hit)
@@ -591,16 +546,36 @@ contains
   end function wasHit
   
   !!
-  !! Hit a cell.
+  !! Hit a cell and add track info
   !! Should only be called in a lock.
   !!
-  subroutine hitCell(self)
+  subroutine hitCellFS(self, length)
     class(cellRR), intent(inout) :: self
+    real(defReal), intent(in)    :: length
     
     self % cellHit = .true.
     self % cellTotalHit = self % cellTotalHit + 1
+    self % volumeTracks = self % volumeTracks + length
   
-  end subroutine hitCell
+  end subroutine hitCellFS
+  
+  !!
+  !! Hit a linear source cell and add track info.
+  !! Should only be called in a lock.
+  !!
+  subroutine hitCellLS(self, length, rL, mat)
+    class(cellRR), intent(inout) :: self
+    real(defReal), intent(in)    :: length
+    real(defReal), dimension(nDim), intent(in) :: rL
+    real(defReal), dimension(matSize), intent(in) :: mat
+
+    self % cellHit = .true.
+    self % cellTotalHit = self % cellTotalHit + 1
+    self % volumeTracks = self % volumeTracks + length
+    self % centroidTracks = self % centroidTracks + rL
+    self % momTracks = self % momTracks + mat
+  
+  end subroutine hitCellLS
 
   !! 
   !! Undo cell hit

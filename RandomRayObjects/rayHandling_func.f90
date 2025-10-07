@@ -197,7 +197,7 @@ contains
     cIdx = r % coords % uniqueID
     matIdx  = r % coords % matIdx
     call XSData % getTotalPointer(matIdx, total)
-    
+
     ! Catch for regions with voids
     ! Assumes these are defined as 'void'
     ! TODO: Use a more robust criterion, as for branching later
@@ -241,7 +241,8 @@ contains
       associate(cell => arrays % cells(cIdx))  
       ! Set new cell's position. Use half distance across cell
       ! to try and avoid FP error
-      if (.not. cell % wasFound()) then
+      !if (.not. cell % wasFound()) then
+      if (.not. cell % cellFound) then
         call cell % newFound(r % rGlobal() - length * HALF * r % dirGlobal())
       end if
       
@@ -255,7 +256,7 @@ contains
       if (matIdx <= XSData % getNMat()) then
       
         !GCC$ vector
-        !$omp simd private(tau, attenuate) aligned(total, src:64)
+        !$omp simd private(tau, attenuate) aligned(total, src:32)
         do g = 1, nG
           tau = total(g) * lenFlt
           attenuate = lenFlt * expF1(tau)
@@ -263,7 +264,7 @@ contains
           angular(g) = angular(g) - delta(g)
         end do
  
-       ! ! Accumulate to scalar flux
+        ! Accumulate to scalar flux
         if (activeRay) then
       
           call cell % setLock()
@@ -273,8 +274,7 @@ contains
             do g = 1, nG
              flx(g) = flx(g) + delta(g)
             end do
-            call cell % incrementVolume(length)
-            call cell % hitCell()
+            call cell % hitCellFS(length)
           call cell % unsetLock()
       
         end if
@@ -300,8 +300,7 @@ contains
             do g = 1, nG
               flx(g) = flx(g) + inc(g)
             end do
-            call cell % incrementVolume(length)
-            call cell % hitCell()
+            call cell % hitCellFS(length)
           call cell % unsetLock()
       
         end if
@@ -433,7 +432,7 @@ contains
 
       ! Calculate source terms
       call cell % getSourceMomentPointers(src, srcX, srcY, srcZ)
-      !$omp simd
+      !$omp simd aligned(src, srcX, srcY, srcZ:32)
       !GCC$ vector
       do g = 1, nG
         flatQ(g) = src(g) + rNormFlt(x) * srcX(g) + rNormFlt(y) * srcY(g) + rNormFlt(z) * srcZ(g)
@@ -529,7 +528,7 @@ contains
           call cell % setLock()
             ! Update flux moments
             call cell % getFluxMomentPointers(flx, flxX, flxY, flxZ)
-            !$omp simd
+            !$omp simd aligned(flx, flxX, flxY, flxZ:64)
             !GCC$ vector
             do g = 1, nG
               flx(g) = flx(g) + delta(g)
@@ -538,10 +537,7 @@ contains
               flxZ(g) = flxZ(g) + zInc(g) 
             end do
             
-            call cell % incrementVolume(length)
-            call cell % incrementCentroid(rC)
-            call cell % incrementMoments(matScore)
-            call cell % hitCell()
+            call cell % hitCellLS(length, rC, matScore)
 
           call cell % unsetLock()
       
@@ -568,8 +564,7 @@ contains
             do g = 1, nG
               flx(g) = flx(g) + inc(g)
             end do
-            call cell % incrementVolume(length)
-            call cell % hitCell()
+            call cell % hitCellFS(length)
           call cell % unsetLock()
       
         end if

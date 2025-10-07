@@ -65,7 +65,6 @@ module dataRR_class
 
     ! Access procedures
     procedure :: getProdPointers
-    !procedure :: getAllPointers
     procedure :: getTotalPointer
     procedure :: getNuFissPointer
     procedure :: getChiPointer
@@ -192,6 +191,34 @@ contains
     if (aniOrder > 0) then
       if (loud) print *,'Including anisotropic scattering data'
       call fatalError(Here,'Anisotropy not yet supported')
+      allocate(self % sigmaS1(matP1 * self % nG * self % nG))
+      if (aniOrder >= 2) then
+        allocate(self % sigmaS2(matP1 * self % nG * self % nG))
+      end if
+      if (aniOrder >= 3) then
+        allocate(self % sigmaS3(matP1 * self % nG * self % nG))
+      end if
+    
+      do m = 1, self % nMat
+        matPtr  => db % getMaterial(m)
+        mat     => baseMgNeutronMaterial_CptrCast(matPtr)
+        do g = 1, self % nG
+          ! Include scattering multiplicity
+          do g1 = 1, self % nG
+            !self % sigmaS1(self % nG * self % nG * (m - 1) + self % nG * (g - 1) + g1)  = &
+            !      real(mat % getScatter1XS(g1, g, rand) * mat % scatter % prod(g, g1) , defFlt)
+            if (aniOrder >= 2) then
+              !self % sigmaS2(self % nG * self % nG * (m - 1) + self % nG * (g - 1) + g1)  = &
+              !    real(mat % getScatter2XS(g1, g, rand) * mat % scatter % prod(g, g1) , defFlt)
+            end if
+            if (aniOrder >= 3) then
+              !self % sigmaS3(self % nG * self % nG * (m - 1) + self % nG * (g - 1) + g1)  = &
+              !    real(mat % getScatter3XS(g1, g, rand) * mat % scatter % prod(g, g1) , defFlt)
+            end if
+          end do
+        end do
+      end do
+      
 
     end if
 
@@ -249,6 +276,9 @@ contains
     if (allocated(self % sigmaF)) print *,'SigmaF XS: '//numToChar(real(self % sigmaF,defReal))
     if (allocated(self % sigmaS)) print *,'SigmaS XS: '//numToChar(real(self % sigmaS,defReal))
     if (allocated(self % chi)) print *,'Chi: '//numToChar(real(self % chi,defReal))
+    if (allocated(self % sigmaS1)) print *,'SigmaS1 XS: '//numToChar(real(self % sigmaS1,defReal))
+    if (allocated(self % sigmaS2)) print *,'SigmaS2 XS: '//numToChar(real(self % sigmaS2,defReal))
+    if (allocated(self % sigmaS3)) print *,'SigmaS3 XS: '//numToChar(real(self % sigmaS3,defReal))
 
   end subroutine display
 
