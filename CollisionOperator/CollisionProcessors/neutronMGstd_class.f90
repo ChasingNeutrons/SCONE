@@ -25,13 +25,8 @@ module neutronMGstd_class
   ! Cross section packages
   use neutronXsPackages_class,       only : neutronMacroXSs
 
-
-  ! Nuclear Data
-  !use nuclearData_inter,              only : nuclearData
-  !use perMaterialNuclearDataMG_inter, only : perMaterialNuclearDataMG
-
-  ! Cross-section packages to interface with nuclear data
-  !use xsMacroSet_class,               only : xsMacroSet, xsMacroSet_ptr
+  ! Tally interfaces
+  use tallyAdmin_class,              only : tallyAdmin
 
   implicit none
   private
@@ -87,14 +82,15 @@ contains
   !!
   !! Samples collision without any implicit treatment
   !!
-  subroutine sampleCollision(self, p, collDat, thisCycle, nextCycle)
+  subroutine sampleCollision(self, p, tally, collDat, thisCycle, nextCycle)
     class(neutronMGstd), intent(inout)   :: self
     class(particle), intent(inout)       :: p
+    type(tallyAdmin), intent(inout)      :: tally
     type(collisionData), intent(inout)   :: collDat
     class(particleDungeon),intent(inout) :: thisCycle
     class(particleDungeon),intent(inout) :: nextCycle
     type(neutronMacroXSs)                :: macroXSs
-    real(defReal)                        :: r
+    real(defReal)                        :: r, denom, alphaXS, probAlpha
     character(100),parameter :: Here =' sampleCollision (neutronMGstd_class.f90)'
 
     ! Verify that particle is MG neutron
@@ -105,7 +101,21 @@ contains
     ! Verify and load nuclear data pointer
     self % xsData => ndReg_getNeutronMG()
     if(.not.associated(self % xsData)) call fatalError(Here, "Failed to get active database for MG Neutron")
-
+    
+    ! Avoid nuclide sampling if alpha absorption occurs
+    denom = self % xsData % getTrackMatXS(p, p % matIdx())
+    alphaXS = p % getAlphaAbsorption()
+    probAlpha = alphaXS / denom
+ 
+    if (p % pRNG % get() < probAlpha) then
+      if (p % alpha >= 0) then
+        collDat % MT = N_TIME_ABS
+      else
+        collDat % MT = N_TIME_PROD
+      end if
+      return
+    end if
+    
     ! Get and verify material pointer
     self % mat => mgNeutronMaterial_CptrCast( self % xsData % getMaterial( p % matIdx()))
     if(.not.associated(self % mat)) call fatalError(Here, "Failed to get MG Neutron Material")
@@ -121,9 +131,10 @@ contains
   !!
   !! Preform implicit treatment
   !!
-  subroutine implicit(self, p, collDat, thisCycle, nextCycle)
+  subroutine implicit(self, p, tally, collDat, thisCycle, nextCycle)
     class(neutronMGstd), intent(inout)   :: self
     class(particle), intent(inout)       :: p
+    type(tallyAdmin), intent(inout)      :: tally
     type(collisionData), intent(inout)   :: collDat
     class(particleDungeon),intent(inout) :: thisCycle
     class(particleDungeon),intent(inout) :: nextCycle
@@ -167,6 +178,8 @@ contains
         call fission % sampleOut(mu, phi, G_out, p % G, p % pRNG)
         dir = rotateVector(p % dirGlobal(), mu, phi)
 
+        ! TODO: Delayed neutron handling when supported by MG mode
+
         ! Copy extra detail from parent particle (i.e. time, flags ect.)
         pTemp       = p
 
@@ -175,19 +188,25 @@ contains
         pTemp % dir = dir
         pTemp % G   = G_out
         pTemp % wgt = wgt
+        pTemp % collisionN = 0
 
         call nextCycle % detain(pTemp)
+
+        ! Report birth of new particle
+        call tally % reportSpawn(N_FISSION, p, pTemp)
+
       end do
     end if
 
   end subroutine implicit
-
+  
   !!
   !! Elastic Scattering
   !!
-  subroutine elastic(self, p , collDat, thisCycle, nextCycle)
+  subroutine elastic(self, p, tally, collDat, thisCycle, nextCycle)
     class(neutronMGstd), intent(inout)   :: self
     class(particle), intent(inout)       :: p
+    type(tallyAdmin), intent(inout)      :: tally
     type(collisionData), intent(inout)   :: collDat
     class(particleDungeon),intent(inout) :: thisCycle
     class(particleDungeon),intent(inout) :: nextCycle
@@ -199,9 +218,10 @@ contains
   !!
   !! Preform scattering
   !!
-  subroutine inelastic(self, p, collDat, thisCycle, nextCycle)
+  subroutine inelastic(self, p, tally, collDat, thisCycle, nextCycle)
     class(neutronMGstd), intent(inout)   :: self
     class(particle), intent(inout)       :: p
+    type(tallyAdmin), intent(inout)      :: tally
     type(collisionData), intent(inout)   :: collDat
     class(particleDungeon),intent(inout) :: thisCycle
     class(particleDungeon),intent(inout) :: nextCycle
@@ -234,9 +254,10 @@ contains
   !!
   !! Preform capture
   !!
-  subroutine capture(self, p, collDat, thisCycle, nextCycle)
+  subroutine capture(self, p, tally, collDat, thisCycle, nextCycle)
     class(neutronMGstd), intent(inout)   :: self
     class(particle), intent(inout)       :: p
+    type(tallyAdmin), intent(inout)      :: tally
     type(collisionData), intent(inout)   :: collDat
     class(particleDungeon),intent(inout) :: thisCycle
     class(particleDungeon),intent(inout) :: nextCycle
@@ -248,9 +269,10 @@ contains
   !!
   !! Preform fission
   !!
-  subroutine fission(self, p, collDat, thisCycle, nextCycle)
+  subroutine fission(self, p, tally, collDat, thisCycle, nextCycle)
     class(neutronMGstd), intent(inout)   :: self
     class(particle), intent(inout)       :: p
+    type(tallyAdmin), intent(inout)      :: tally
     type(collisionData), intent(inout)   :: collDat
     class(particleDungeon),intent(inout) :: thisCycle
     class(particleDungeon),intent(inout) :: nextCycle
@@ -262,9 +284,10 @@ contains
   !!
   !! Applay cutoffs or post-collision implicit treatment
   !!
-  subroutine cutoffs(self, p, collDat, thisCycle, nextCycle)
+  subroutine cutoffs(self, p, tally, collDat, thisCycle, nextCycle)
     class(neutronMGstd), intent(inout)   :: self
     class(particle), intent(inout)       :: p
+    type(tallyAdmin), intent(inout)      :: tally
     type(collisionData), intent(inout)   :: collDat
     class(particleDungeon),intent(inout) :: thisCycle
     class(particleDungeon),intent(inout) :: nextCycle

@@ -2,10 +2,9 @@ module cylinder_class
 
   use numPrecision
   use universalVariables, only : SURF_TOL, INF, X_AXIS, Y_AXIS, Z_AXIS
-  use genericProcedures,  only : fatalError, numToChar, dotProduct
+  use genericProcedures,  only : fatalError, numToChar
   use dictionary_class,   only : dictionary
-  use quadSurface_inter,  only : quadSurface
-  use surface_inter,      only : kill_super => kill
+  use surface_inter,      only : surface, kill_super => kill
 
   implicit none
   private
@@ -31,16 +30,16 @@ module cylinder_class
   !!         radius 7.34; }
   !!
   !! Private Members:
-  !!   axis -> Index of an alignment axis in {X_AXIS, Y_AXIS, Z_AXIS}
-  !!   plane -> Indexes of axis in plane of cylinder {X_AXIS, Y_AXIS, Z_AXIS}\{axis}
+  !!   axis   -> Index of an alignment axis in {X_AXIS, Y_AXIS, Z_AXIS}
+  !!   plane  -> Indexes of axis in plane of cylinder {X_AXIS, Y_AXIS, Z_AXIS}\{axis}
   !!   origin -> Location of the middle of the cylinder (component in axis has no significance)
-  !!   r      -> Sphere radius
+  !!   r      -> Cylinder radius
   !!   r_sq   -> Square of radius r (r^2)
   !!
   !! Interface:
   !!   surface interface
   !!
-  type, public, extends(quadSurface) :: cylinder
+  type, public, extends(surface) :: cylinder
     private
     integer(shortInt)               :: axis   = 0
     integer(shortInt), dimension(2) :: plane  = 0
@@ -55,10 +54,12 @@ module cylinder_class
     procedure :: evaluate
     procedure :: distance
     procedure :: going
+    procedure :: normal
     procedure :: kill
 
     ! Local procedures
     procedure :: build
+
   end type cylinder
 
 contains
@@ -86,6 +87,7 @@ contains
         str = 'unknown cylinder'
 
     end select
+
   end function myType
 
   !!
@@ -125,7 +127,7 @@ contains
   !! Build cylinder from components
   !!
   !! Args:
-  !!   id [in] -> Surface ID
+  !!   id [in]   -> Surface ID
   !!   type [in] -> Cylinder type {'xCylinder', 'yCylinder' or 'zCylinder'}
   !!   origin [in] -> Cylinder origin
   !!   radius [in] -> Cylinder radius
@@ -165,7 +167,7 @@ contains
        self % plane = [X_AXIS, Y_AXIS]
 
      case default
-       call fatalError(Here, 'Uknown type of cylinder: '//type)
+       call fatalError(Here, 'Unknown type of cylinder: '//type)
 
    end select
 
@@ -205,7 +207,7 @@ contains
   !! See surface_inter for details
   !!
   pure function evaluate(self, r) result(c)
-    class(cylinder), intent(in)               :: self
+    class(cylinder), intent(in)             :: self
     real(defReal), dimension(3), intent(in) :: r
     real(defReal)                           :: c
     real(defReal), dimension(2)             :: diff
@@ -273,7 +275,7 @@ contains
   !! See surface_inter for details
   !!
   pure function going(self, r, u) result(halfspace)
-    class(cylinder), intent(in)              :: self
+    class(cylinder), intent(in)             :: self
     real(defReal), dimension(3), intent(in) :: r
     real(defReal), dimension(3), intent(in) :: u
     logical(defBool)                        :: halfspace
@@ -285,6 +287,26 @@ contains
     halfspace = dot_product(rp , up ) >= ZERO
 
   end function going
+  
+  !!
+  !! Return the normal corresponding to the cylinder rim
+  !!
+  pure function normal(self, r, u) result(n)
+    class(cylinder), intent(in)             :: self
+    real(defReal), dimension(3), intent(in) :: r
+    real(defReal), dimension(3), intent(in) :: u
+    real(defReal), dimension(3)             :: n
+    integer(shortInt), dimension(2)         :: p
+
+    n = ZERO
+
+    ! Define for short-hand
+    p = self % plane
+
+    n(p) = r(p) - self % origin(p)
+    n = n / norm2(n)
+
+  end function normal
 
   !!
   !! Return to uninitialised state

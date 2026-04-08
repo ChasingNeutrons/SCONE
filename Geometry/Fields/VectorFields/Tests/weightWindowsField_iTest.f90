@@ -1,6 +1,6 @@
 module weightWindowsField_iTest
   use numPrecision
-  use pFUnit_mod
+  use funit
   use particle_class,           only : particle
   use dictionary_class,         only : dictionary
   use dictParser_func,          only : charToDict
@@ -61,25 +61,25 @@ contains
   subroutine testGetValue(this)
     class(test_weightWindows), intent(inout) :: this
     type(particle)                           :: p
-    integer(shortInt), dimension(3)          :: bins, EXPECTED_BINS
+    real(defReal), dimension(3)              :: bins, EXPECTED_BINS
 
     p % isMG = .false.
     p % coords % lvl(1) % r = [0.5, 7.0, 0.0]
     p % E = 10.0
 
-    bins = this % wwField % at(p)
+    bins = this % wwField % atP(p)
     EXPECTED_BINS = [0.4, 1.5, 0.8]
 
-    @assertEqual(EXPECTED_BINS,bins)
+    @assertEqual(EXPECTED_BINS, bins, tolerance=1e-6)
 
     p % isMG = .false.
     p % coords % lvl(1) % r = [-0.5, 7.0, 0.0]
     p % E = 10.0
 
-    bins = this % wwField % at(p)
+    bins = this % wwField % atP(p)
     EXPECTED_BINS = ZERO
 
-    @assertEqual(EXPECTED_BINS,bins)
+    @assertEqual(EXPECTED_BINS, bins, tolerance=1e-6)
 
   end subroutine testGetValue
 

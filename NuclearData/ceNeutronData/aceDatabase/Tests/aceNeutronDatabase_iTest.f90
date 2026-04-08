@@ -18,19 +18,19 @@ module aceNeutronDatabase_iTest
   use aceNeutronNuclide_class,  only : aceNeutronNuclide, aceNeutronNuclide_TptrCast
   use neutronXSPackages_class,  only : neutronMicroXSs, neutronMacroXSs
   use materialMenu_mod,         only : mm_init => init, mm_kill => kill
-  use pFUnit_mod
+  use funit
 
   implicit none
 
   ! Material definitions
   character(*),parameter :: MAT_INPUT_STR = &
-  & "water { temp 273;           &
+  & "water {                     &
   &       composition {          &
   &       1001.03 5.028E-02;     &
   &       8016.03 2.505E-02;     &
   &                   }          &
   &        }                     &
-  &  uo2  { temp 1;              &
+  &  uo2  {                      &
   &        composition {         &
   &        92233.03 2.286E-02;   &
   &        8016.03  4.572E-02;   &
@@ -75,7 +75,7 @@ contains
     ! Initialise data
     ptr => data
     call data % init(dataDict, ptr, silent = .true.)
-    call data % activate([1,2])
+    call data % activate([1,2], silent = .true.)
 
     !!<><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
     !! Perform tests
@@ -91,7 +91,7 @@ contains
     @assertNotAssociated( ceNeutronMaterial_TptrCast( data % getMaterial(3)))
 
     ! Get water
-    mat => ceNeutronMaterial_TptrCast( data % getMaterial(1))
+    mat => ceNeutronMaterial_TptrCast(data % getMaterial(1))
     @assertAssociated(mat)
 
     ! Make sure densities are present
@@ -172,7 +172,6 @@ contains
     name = 'uo2'
     @assertTrue( 0 /= matNames % getOrDefault(name, 0))
 
-
     !<><><><><><><><><><><><><><><><><><><><><><><><>
     ! Test getting nuclide XSs
      !
@@ -181,9 +180,9 @@ contains
 
     ! H-1
     nuc  => ceNeutronNuclide_CptrCast( data % getNuclide(H1))
-    @assertEqual(ONE, 20.765855864000002_defReal/ nuc % getTotalXS(1.1E-6_defReal, p % pRNG), TOL)
+    @assertEqual(ONE, 20.765855864000002_defReal/ nuc % getTotalXS(1.1E-6_defReal, ONE, p % pRNG), TOL)
 
-    call nuc % getMicroXSs(microXSs, 5.6E-3_defReal, p % pRNG)
+    call nuc % getMicroXSs(microXSs, 5.6E-3_defReal, ONE, p % pRNG)
 
     ! Absent XSs
     @assertEqual(ZERO, microXSs % fission)
@@ -206,17 +205,27 @@ contains
     @assertEqual(ONE, data % getTotalMatXS(p , 1)/1.1406745607419302_defReal , TOL)
 
     p % E = 19.9_defReal
-    @assertEqual(ONE, data % getTransMatXS(p , 1)/6.539039844E-02_defReal , TOL)
-
+    @assertEqual(ONE, data % getTrackingXS(p, 1, MATERIAL_XS)/6.539039844E-02_defReal , TOL)
 
     ! Total XS of UO2
     p % E = 1.1E-6_defReal
     @assertEqual(ONE, data % getTotalMatXS(p , 2)/4.4149556129495560_defReal , TOL)
 
     p % E = 19.9_defReal
-    @assertEqual(ONE, data % getTransMatXS(p , 2)/0.21869599644_defReal , TOL)
+    @assertEqual(ONE, data % getTrackingXS(p , 2, MATERIAL_XS)/0.21869599644_defReal , TOL)
 
     ! Majorant
+    p % E = 1.1E-6_defReal
+    @assertEqual(ONE, data % getMajorantXS(p) /4.4149556129495560_defReal , TOL)
+    @assertEqual(ONE, data % getTrackingXS(p , 3, MAJORANT_XS) /4.4149556129495560_defReal , TOL)
+
+    p % E = 19.9_defReal
+    @assertEqual(ONE, data % getMajorantXS(p)/0.21869599644_defReal , TOL)
+    @assertEqual(ONE, data % getTrackingXS(p , 3, MAJORANT_XS) /0.21869599644_defReal , TOL)
+
+    ! Check that results are the same with on-the-fly majorant
+    data % hasMajorant = .false.
+
     p % E = 1.1E-6_defReal
     @assertEqual(ONE, data % getMajorantXS(p) /4.4149556129495560_defReal , TOL)
 
@@ -228,7 +237,7 @@ contains
     !
     ! Water
     mat => ceNeutronMaterial_TptrCast( data % getMaterial(1))
-    call mat % getMacroXSs(macroXss, 3.6E-1_defReal, p % pRNG)
+    call mat % getMacroXSs(macroXss, 3.6E-1_defReal, p % T, p % rho, p % pRNG)
 
     ! Absent XSs
     @assertEqual(ZERO, macroXSs % fission)
@@ -240,10 +249,9 @@ contains
     @assertEqual(ONE, 2.198066842597500e-06_defReal/ macroXSs % capture, TOL)
 
     ! Water with some inelastic collisions
-    call mat % getMacroXSs(macroXss, 6.525_defReal, p % pRNG)
+    call mat % getMacroXSs(macroXss, 6.525_defReal, p % T, p % rho, p % pRNG)
 
     @assertEqual(ONE, macroXSs % inelasticScatter/1.903667536E-04_defReal, TOL)
-
 
     !<><><><><><><><><><><><><><><><><><><><>
     ! Test getting energy bounds
@@ -254,6 +262,7 @@ contains
 
     ! Clean everything
     call data % kill()
+
     call mm_kill()
 
   end subroutine test_aceNeutronDatabase

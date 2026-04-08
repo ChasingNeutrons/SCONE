@@ -3,7 +3,9 @@ module simpleFMClerk_class
   use numPrecision
   use tallyCodes
   use endfConstants
+  use universalVariables
   use genericProcedures,          only : fatalError
+  use display_func,               only : statusMsg
   use dictionary_class,           only : dictionary
   use particle_class,             only : particle, particleState
   use particleDungeon_class,      only : particleDungeon
@@ -59,10 +61,12 @@ module simpleFMClerk_class
   type, public, extends(tallyClerk) :: simpleFMClerk
     private
     !! Map defining the discretisation
-    class(tallyMap), allocatable           :: map
-    type(macroResponse)                    :: resp
-    real(defReal),dimension(:),allocatable :: startWgt
-    integer(shortInt)                      :: N = 0 !! Number of bins
+    class(tallyMap), allocatable :: map
+    type(macroResponse)          :: resp
+    integer(shortInt)            :: N = 0 !! Number of bins
+
+    ! Settings
+    logical(defBool) :: handleVirtual = .true.
 
   contains
     ! Procedures used during build
@@ -73,7 +77,7 @@ module simpleFMClerk_class
     ! File reports and check status -> run-time procedures
     procedure  :: reportCycleStart
     procedure  :: reportInColl
-    procedure  :: reportCycleEnd
+    procedure  :: closeCycle
 
     ! Overwrite default run-time result procedure
     procedure  :: getResult
@@ -84,6 +88,7 @@ module simpleFMClerk_class
 
     ! Deconstructor
     procedure  :: kill
+
   end type simpleFMClerk
 
   !!
@@ -94,8 +99,8 @@ module simpleFMClerk_class
   !!    dim3 -> 1 is values; 2 is STDs
   !!
   type,public, extends( tallyResult) :: FMresult
-    integer(shortInt)                           :: N  = 0 ! Size of FM
-    real(defReal), dimension(:,:,:),allocatable :: FM  ! FM proper
+    integer(shortInt)                            :: N  = 0 ! Size of FM
+    real(defReal), dimension(:,:,:), allocatable :: FM     ! FM proper
   end type FMResult
 
 contains
@@ -119,11 +124,11 @@ contains
     ! Read size of the map
     self % N = self % map % bins(0)
 
-    ! Allocate space for starting weights
-    allocate(self % startWgt(self % N))
-
     ! Initialise response
     call self % resp % build(macroNuFission)
+
+    ! Handle virtual collisions
+    call dict % getOrDefault(self % handleVirtual,'handleVirtual', .true.)
 
   end subroutine init
 
@@ -136,7 +141,7 @@ contains
     class(simpleFMClerk),intent(in)            :: self
     integer(shortInt),dimension(:),allocatable :: validCodes
 
-    validCodes = [inColl_CODE, cycleStart_Code ,cycleEnd_Code]
+    validCodes = [inColl_CODE, cycleStart_CODE, closeCycle_CODE]
 
   end function validReports
 
@@ -149,13 +154,14 @@ contains
     class(simpleFMClerk), intent(in) :: self
     integer(shortInt)                :: S
 
-    S = self % N * self % N
+    S = self % N * (self % N + 1)
 
   end function getSize
 
   !!
   !! Process start of the cycle
-  !! Calculate starting weights in each bin
+  !! Calculate starting weights in each bin and store them at memory location:
+  !! self % getMemAddress() : self % getMemAddress() + N - 1
   !!
   !! See tallyClerk_inter for details
   !!
@@ -165,20 +171,26 @@ contains
     type(scoreMemory), intent(inout)    :: mem
     integer(shortInt)                   :: idx, i
 
-    self % startWgt = ZERO
-
     ! Loop through a population and calculate starting weight in each bin
-    do i=1,start % popSize()
-      associate( state => start % get(i) )
+    do i = 1, start % popSize()
+
+      associate (state => start % get(i))
+
         idx = self % map % map(state)
-        if(idx > 0) self % startWgt(idx) = self % startWgt(idx) + state % wgt
+        if (idx == 0) cycle
+        call mem % score(state % wgt, self % getMemAddress() + idx - 1)
+
       end associate
+
     end do
 
   end subroutine reportCycleStart
 
   !!
   !! Process incoming collision report
+  !!
+  !! Calculate matrix elements and store them at memory location:
+  !! self % getMemAddress() + N : self % getMemAddress() + N*(1 + N)
   !!
   !! See tallyClerk_inter for details
   !!
@@ -188,39 +200,51 @@ contains
     class(nuclearDatabase),intent(inout) :: xsData
     type(scoreMemory), intent(inout)     :: mem
     logical(defBool), intent(in)         :: virtual
+    class(neutronMaterial), pointer      :: mat
     type(particleState)                  :: state
     integer(shortInt)                    :: sIdx, cIdx
     integer(longInt)                     :: addr
-    real(defReal)                        :: score
-    class(neutronMaterial), pointer      :: mat
-    character(100), parameter :: Here = 'reportInColl simpleFMClear_class.f90'
+    real(defReal)                        :: score, flux
+    character(100), parameter :: Here = 'reportInColl simpleFMClerk_class.f90'
 
-    ! This clerk does not handle virtual scoring yet
-    if (virtual) return
+    ! Return if collision is virtual but virtual collision handling is off
+    if ((.not. self % handleVirtual) .and. virtual) return
 
-    ! Get material or return if it is not a neutron
-    mat    => neutronMaterial_CptrCast( xsData % getMaterial(p % matIdx()))
+    ! Ensure we're not in void (could happen when scoring virtual collisions)
+    if (p % matIdx() == VOID_MAT) return
 
-    if(.not.associated(mat)) return
+    ! Get material pointer
+    mat => neutronMaterial_CptrCast(xsData % getMaterial(p % matIdx()))
+    if (.not.associated(mat)) then
+      call fatalError(Here,'Unrecognised type of material was retrived from nuclearDatabase')
+    end if
 
     ! Return if material is not fissile
-    if(.not.mat % isFissile()) return
+    if (.not. mat % isFissile()) return
+
+    ! Calculate flux with the right cross section according to virtual collision handling
+    if (self % handleVirtual) then
+      flux = p % w / xsData % getTrackingXS(p, p % matIdx(), TRACKING_XS)
+    else
+      flux = p % w / xsData % getTotalMatXS(p, p % matIdx())
+    end if
 
     ! Find starting index in the map
-    sIdx = self % map % map( p % preHistory)
+    sIdx = self % map % map(p % preHistory)
 
     ! Find collision index in the map
     state = p
     cIdx = self % map % map(state)
 
     ! Defend against invalid collision or starting bin
-    if(cIdx == 0 .or. sIdx == 0 ) return
+    if (cIdx == 0 .or. sIdx == 0) return
 
     ! Calculate fission neutron production
-    score = self % resp % get(p, xsData) * p % w / xsData % getTotalMatXS(p, p % matIdx())
+    score = self % resp % get(p, xsData) * flux
 
     ! Score element of the matrix
-    addr = self % getMemAddress() + (sIdx - 1) * self % N + cIdx - 1
+    ! Note that the matrix memory location starts from memAddress + N
+    addr = self % getMemAddress() + sIdx * self % N + cIdx - 1
     call mem % score(score, addr)
 
   end subroutine reportInColl
@@ -230,7 +254,7 @@ contains
   !!
   !! See tallyClerk_inter for details
   !!
-  subroutine reportCycleEnd(self, end, mem)
+  subroutine closeCycle(self, end, mem)
     class(simpleFMClerk), intent(inout) :: self
     class(particleDungeon), intent(in)  :: end
     type(scoreMemory), intent(inout)    :: mem
@@ -238,26 +262,29 @@ contains
     integer(longInt)                    :: addrFM
     real(defReal)                       :: normFactor
 
-    if(mem % lastCycle()) then
+    if (mem % lastCycle()) then
       ! Set address to the start of Fission Matrix
-      ! Decrease by 1 to get correct addres on the fisrt iteration of the loop
-      addrFM  = self % getMemAddress() - 1
+      ! Decrease by 1 to get correct address on the first iteration of the loop
+      addrFM  = self % getMemAddress() + self % N - 1
 
       ! Normalise and accumulate estimates
-      do i=1,self % N
-        ! Calculate normalisation factor
-        normFactor = self % startWgt(i)
-        if(normFactor /= ZERO) normFactor = ONE / normFactor
+      do i = 1, self % N
 
-        do j=1,self % N
+        ! Calculate normalisation factor
+        normFactor = mem % getScore(self % getMemAddress() + i - 1)
+        if (normFactor /= ZERO) normFactor = ONE / normFactor
+
+        do j = 1, self % N
           ! Normalise FM column
           addrFM = addrFM + 1
           call mem % closeBin(normFactor, addrFM)
         end do
+
       end do
+
     end if
 
-  end subroutine reportCycleEnd
+  end subroutine closeCycle
 
   !!
   !! Return result from the clerk for interaction with Physics Package
@@ -278,15 +305,16 @@ contains
     ! Allocate result to FMresult
     ! Do not deallocate if already allocated to FMresult
     ! Its not to nice -> clean up
-    if(allocated(res)) then
+    if (allocated(res)) then
+
       select type(res)
         class is (FMresult)
           ! Do nothing
-
-        class default ! Reallocate
+        class default
+          ! Reallocate
           deallocate(res)
           allocate( FMresult :: res)
-     end select
+      end select
 
     else
       allocate( FMresult :: res)
@@ -299,10 +327,12 @@ contains
         ! Check size and reallocate space if needed
         ! This is horrible. Hove no time to polish. Blame me (MAK)
         if (allocated(res % FM)) then
-          if( any(shape(res % FM) /= [self % N, self % N, 2])) then
+
+          if (any(shape(res % FM) /= [self % N, self % N, 2])) then
             deallocate(res % FM)
             allocate(res % FM(self % N, self % N, 2))
           end if
+
         else
           allocate(res % FM(self % N, self % N, 2))
         end if
@@ -311,9 +341,9 @@ contains
         res % N = self % N
 
         ! Load entries
-        addr = self % getMemAddress() - 1
-        do i = 1,self % N
-          do j=1, self % N
+        addr = self % getMemAddress() + self % N - 1
+        do i = 1, self % N
+          do j = 1, self % N
             addr = addr + 1
             call mem % getResult(val, STD, addr)
             res % FM(j, i, 1) = val
@@ -322,6 +352,7 @@ contains
         end do
 
     end select
+
   end subroutine getResult
 
   !!
@@ -333,7 +364,7 @@ contains
     class(simpleFMClerk), intent(in) :: self
     type(scoreMemory), intent(in)    :: mem
 
-    print *, 'simpleFMClerk does not support display yet'
+    call statusMsg('simpleFMClerk does not support display yet')
 
   end subroutine display
 
@@ -359,11 +390,11 @@ contains
 
     ! Print fission matrix
     name = 'FM'
-    addr = self % getMemAddress() - 1
+    addr = self % getMemAddress() + self % N - 1
 
     call outFile % startArray(name, [self % N, self % N])
 
-    do i=1,self % N * self % N
+    do i = 1, self % N * self % N
       addr = addr + 1
       call mem % getResult(val, std, addr)
       call outFile % addResult(val, std)
@@ -385,9 +416,11 @@ contains
     ! Call superclass
     call kill_super(self)
 
-    if(allocated(self % map)) deallocate(self % map)
-    if(allocated(self % startWgt)) deallocate(self % startWgt)
+    if (allocated(self % map)) deallocate(self % map)
+
     self % N = 0
+    self % handleVirtual = .true.
+
     call self % resp % kill()
 
   end subroutine kill

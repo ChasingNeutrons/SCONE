@@ -2,13 +2,13 @@ module neutronCEimp_class
 
   use numPrecision
   use endfConstants
-  use universalVariables,            only : nameUFS, nameWW
+  use universalVariables,            only : nameUFS, nameWW, REJECTED, kBoltzmannMev
   use genericProcedures,             only : fatalError, rotateVector, numToChar
   use dictionary_class,              only : dictionary
   use RNG_class,                     only : RNG
 
   ! Particle types
-  use particle_class,                only : particle, particleState, printType, P_NEUTRON
+  use particle_class,                only : particle, particleState, printType, P_NEUTRON, P_PRECURSOR
   use particleDungeon_class,         only : particleDungeon
 
   ! Abstarct interface
@@ -38,6 +38,10 @@ module neutronCEimp_class
   ! Scattering procedures
   use scatteringKernels_func, only : asymptoticScatter, targetVelocity_constXS, &
                                      asymptoticInelasticScatter, targetVelocity_DBRCXS
+
+  ! Tally interfaces
+  use tallyAdmin_class,       only : tallyAdmin
+
   implicit none
   private
 
@@ -58,16 +62,19 @@ module neutronCEimp_class
   !!  impAbs  -> is implicit capture performed? (off by default)
   !!  impGen  -> are fission sites generated implicitly? (on by default)
   !!  UFS     -> uniform fission sites variance reduction
-  !!  thresh_E -> Energy threshold for explicit treatment of target nuclide movement [-].
-  !!              Target movment is sampled if neutron energy E < kT * thresh_E where
+  !!  maxSplit -> maximum number of splits allowed per particle (default = 1000)
+  !!  threshE  -> Energy threshold for explicit treatment of target nuclide movement [-].
+  !!              Target movement is sampled if neutron energy E < kT * threshE where
   !!              kT is target material temperature in [MeV]. (default = 400.0)
-  !!  thresh_A -> Mass threshold for explicit tratment of target nuclide movement [Mn].
-  !!              Target movment is sampled if target mass A < thresh_A. (default = 1.0)
+  !!  threshA  -> Mass threshold for explicit treatment of target nuclide movement [Mn].
+  !!              Target movment is sampled if target mass A < threshA. (default = 1.0)
   !!  DBRCeMin -> Minimum energy to which DBRC is applied
   !!  DBRCeMax -> Maximum energy to which DBRC is applied
   !!  splitting -> splits particles above certain weight (on by default)
   !!  roulette  -> roulettes particles below certain weight (off by defautl)
   !!  weightWindows -> uses a weight windows field (off by default)
+  !!  makePrec   -> Produce precursor particles, used in dynamic calculations (default = false)
+  !!  neglectDelayed -> If true, prevents delayed neutrons or precursors from being produced
   !!
   !! Sample dictionary input:
   !!   collProcName {
@@ -85,6 +92,7 @@ module neutronCEimp_class
   !!   #impGen         <logical>;#
   !!   #UFS            <logical>;#
   !!   #weightWindows  <logical>;#
+  !!   #maxSplit       <integer>;#
   !!   }
   !!
   type, public, extends(collisionProcessor) :: neutronCEimp
@@ -101,19 +109,23 @@ module neutronCEimp_class
     real(defReal) :: minWgt
     real(defReal) :: maxWgt
     real(defReal) :: avWgt
-    real(defReal) :: thresh_E
-    real(defReal) :: thresh_A
+    real(defReal) :: threshE
+    real(defReal) :: threshA
     real(defReal) :: DBRCeMin
     real(defReal) :: DBRCeMax
+    integer(shortInt) :: maxSplit
+    logical(defBool) :: makePrec = .false.
+    logical(defBool) :: neglectDelayed = .false.
 
     ! Variance reduction options
-    logical(defBool) :: weightWindows
-    logical(defBool) :: splitting
-    logical(defBool) :: roulette
-    logical(defBool) :: implicitAbsorption ! Prevents particles dying through capture
-    logical(defBool) :: implicitSites ! Generates fission sites on every fissile collision
-    logical(defBool) :: uniFissSites
+    logical(defBool)  :: weightWindows
+    logical(defBool)  :: splitting
+    logical(defBool)  :: roulette
+    logical(defBool)  :: implicitAbsorption ! Prevents particles dying through capture
+    logical(defBool)  :: implicitSites ! Generates fission sites on every fissile collision
+    logical(defBool)  :: uniFissSites
 
+    ! Variance reduction requirements
     type(weightWindowsField), pointer :: weightWindowsMap
 
   contains
@@ -159,11 +171,12 @@ contains
     call dict % getOrDefault(self % maxE,'maxEnergy',20.0_defReal)
 
     ! Thermal scattering kernel thresholds
-    call dict % getOrDefault(self % thresh_E, 'energyThreshold', 400.0_defReal)
-    call dict % getOrDefault(self % thresh_A, 'massThreshold', 1.0_defReal)
+    call dict % getOrDefault(self % threshE, 'energyThreshold', 400.0_defReal)
+    call dict % getOrDefault(self % threshA, 'massThreshold', 1.0_defReal)
 
     ! Obtain settings for variance reduction
     call dict % getOrDefault(self % weightWindows,'weightWindows', .false.)
+    call dict % getOrDefault(self % maxSplit,'maxSplit', 1000)
     call dict % getOrDefault(self % splitting,'split', .false.)
     call dict % getOrDefault(self % roulette,'roulette', .false.)
     call dict % getOrDefault(self % minWgt,'minWgt',0.25_defReal)
@@ -177,12 +190,16 @@ contains
     if( self % minE < ZERO ) call fatalError(Here,'-ve minEnergy')
     if( self % maxE < ZERO ) call fatalError(Here,'-ve maxEnergy')
     if( self % minE >= self % maxE) call fatalError(Here,'minEnergy >= maxEnergy')
-    if( self % thresh_E < 0) call fatalError(Here,' -ve energyThreshold')
-    if( self % thresh_A < 0) call fatalError(Here,' -ve massThreshold')
+    if( self % threshE < 0) call fatalError(Here,' -ve energyThreshold')
+    if( self % threshA < 0) call fatalError(Here,' -ve massThreshold')
 
     ! DBRC energy limits
     call dict % getOrDefault(self % DBRCeMin,'DBRCeMin', (1.0E-8_defReal))
     call dict % getOrDefault(self % DBRCeMax,'DBRCeMax', (200E-6_defReal))
+    
+    ! Precursor settings
+    call dict % getOrDefault(self % makePrec, 'makePrec', .false.)
+    call dict % getOrDefault(self % neglectDelayed, 'neglectDelayed', .false.)
 
     if (self % splitting) then
       if (self % maxWgt < 2 * self % minWgt) call fatalError(Here,&
@@ -190,11 +207,14 @@ contains
     end if
 
     if (self % implicitAbsorption) then
-      if (.not.self % roulette) call fatalError(Here,&
-         'Must use Russian roulette when using implicit absorption')
+      if (.not.self % roulette .and. .not. self % weightWindows) call fatalError(Here,&
+         'Must use Russian roulette or weight windows when using implicit absorption')
       if (.not.self % implicitSites) call fatalError(Here,&
          'Must generate fission sites implicitly when using implicit absorption')
     end if
+    
+    if (self % makePrec .and. self % neglectDelayed) call fatalError(Here,&
+            'Incompatible options: cannot makePrecursors and neglectDelayed neutrons!')
 
     ! Sets up the uniform fission sites field
     if (self % uniFissSites) then
@@ -213,14 +233,15 @@ contains
   !!
   !! Samples collision without any implicit treatment
   !!
-  subroutine sampleCollision(self, p, collDat, thisCycle, nextCycle)
+  subroutine sampleCollision(self, p, tally, collDat, thisCycle, nextCycle)
     class(neutronCEimp), intent(inout)   :: self
     class(particle), intent(inout)       :: p
+    type(tallyAdmin), intent(inout)      :: tally
     type(collisionData), intent(inout)   :: collDat
     class(particleDungeon),intent(inout) :: thisCycle
     class(particleDungeon),intent(inout) :: nextCycle
     type(neutronMicroXSs)                :: microXSs
-    real(defReal)                        :: r
+    real(defReal)                        :: r, kT, denom, alphaXS, probAlpha
     character(100),parameter :: Here = 'sampleCollision (neutronCEimp_class.f90)'
 
     ! Verify that particle is CE neutron
@@ -231,19 +252,45 @@ contains
     ! Verify and load nuclear data pointer
     self % xsData => ndReg_getNeutronCE()
     if(.not.associated(self % xsData)) call fatalError(Here, 'There is no active Neutron CE data!')
-
+    
+    ! Avoid nuclide sampling if alpha absorption occurs
+    denom = self % xsData % getTrackMatXS(p, p % matIdx())
+    alphaXS = p % getAlphaAbsorption()
+    probAlpha = alphaXS / denom
+ 
+    if (p % pRNG % get() < probAlpha) then
+      collDat % E = p % E
+      if (p % alpha >= 0) then
+        collDat % MT = N_TIME_ABS
+      else
+        collDat % MT = N_TIME_PROD
+      end if
+      return
+    end if
+    
     ! Verify and load material pointer
     self % mat => ceNeutronMaterial_CptrCast( self % xsData % getMaterial( p % matIdx()))
     if(.not.associated(self % mat)) call fatalError(Here, 'Material is not ceNeutronMaterial')
 
     ! Select collision nuclide
-    collDat % nucIdx = self % mat % sampleNuclide(p % E, p % pRNG)
+    call self % mat % sampleNuclide(p % E, p % pRNG, collDat % nucIdx, collDat % E, p % T, p % rho)
+
+    ! If nuclide was rejected in TMS loop return to tracking
+    if (collDat % nucIdx == REJECTED) then
+      collDat % MT = noInteraction
+      return
+    end if
 
     self % nuc => ceNeutronNuclide_CptrCast(self % xsData % getNuclide(collDat % nucIdx))
-    if(.not.associated(self % mat)) call fatalError(Here, 'Failed to retrieve CE Neutron Nuclide')
+    if (.not.associated(self % mat)) call fatalError(Here, 'Failed to retrieve CE Neutron Nuclide')
 
     ! Select Main reaction channel
-    call self % nuc % getMicroXSs(microXss, p % E, p % pRNG)
+    if (p % T <= ZERO) then
+      kT = self % mat % kT
+    else
+      kT = p % T * kBoltzmannMeV
+    end if
+    call self % nuc % getMicroXSs(microXss, collDat % E, kT, p % pRNG)
     r = p % pRNG % get()
     collDat % MT = microXss % invert(r)
 
@@ -252,9 +299,10 @@ contains
   !!
   !! Perform implicit treatment
   !!
-  subroutine implicit(self, p, collDat, thisCycle, nextCycle)
+  subroutine implicit(self, p, tally, collDat, thisCycle, nextCycle)
     class(neutronCEimp), intent(inout)   :: self
     class(particle), intent(inout)       :: p
+    type(tallyAdmin), intent(inout)      :: tally
     type(collisionData), intent(inout)   :: collDat
     class(particleDungeon),intent(inout) :: thisCycle
     class(particleDungeon),intent(inout) :: nextCycle
@@ -263,28 +311,37 @@ contains
     type(particleState)                  :: pTemp
     real(defReal),dimension(3)           :: r, dir, val
     integer(shortInt)                    :: n, i
-    real(defReal)                        :: wgt, rand1, E_out, mu, phi
+    real(defReal)                        :: wgt, rand1, E_out, mu, phi, lambda
     real(defReal)                        :: sig_nufiss, sig_tot, k_eff, &
-                                            sig_scatter, totalElastic
-    logical(defBool)                     :: fiss_and_implicit
+                                            sig_scatter, totalElastic, kT
+    logical(defBool)                     :: fiss_and_implicit, keepDel
     character(100),parameter             :: Here = 'implicit (neutronCEimp_class.f90)'
 
     ! Generate fission sites if nuclide is fissile
     fiss_and_implicit = self % nuc % isFissile() .and. self % implicitSites
+
     if (fiss_and_implicit) then
+
       ! Obtain required data
       wgt   = p % w                ! Current weight
       k_eff = p % k_eff            ! k_eff for normalisation
       rand1 = p % pRNG % get()     ! Random number to sample sites
 
-      call self % nuc % getMicroXSs(microXSs, p % E, p % pRNG)
+      ! Retrieve cross section at the energy used for reaction sampling
+      if (p % T <= ZERO) then
+        kT = self % mat % kT
+      else
+        kT = p % T * kBoltzmannMeV
+      end if
+      call self % nuc % getMicroXSs(microXSs, collDat % E, kT, p % pRNG)
+
       sig_nufiss = microXSs % nuFission
       sig_tot    = microXSs % total
 
       ! Sample number of fission sites generated
       ! Support -ve weight particles
       if (self % uniFissSites) then
-        val = self % ufsField % at(p)
+        val = self % ufsField % atP(p)
         n = int(abs( (wgt * sig_nufiss) / (sig_tot * k_eff))*val(1)/val(2) + rand1, shortInt)
         wgt =  val(2)/val(1)
       else
@@ -302,10 +359,20 @@ contains
       ! Store new sites in the next cycle dungeon
       r   = p % rGlobal()
 
-      do i=1,n
-        call fission % sampleOut(mu, phi, E_out, p % E, p % pRNG)
+      do i = 1,n
+        call fission % sampleOut(mu, phi, E_out, p % E, p % pRNG, lambda)
+        
+        ! Skip if a delayed particle is produced in prompt-only mode
+        if (self % neglectDelayed .and. lambda < huge(lambda)) cycle
+        
+        ! If alpha, determine probability of keeping a delayed neutron
+        if (abs(p % alpha) > epsilon(p % alpha)) then
+          keepDel = p % pRNG % get() < lambda/(lambda + p % alpha)
+          if (.not. keepDel) cycle
+        end if
+        
         dir = rotateVector(p % dirGlobal(), mu, phi)
-
+        
         if (E_out > self % maxE) E_out = self % maxE
 
         ! Copy extra detail from parent particle (i.e. time, flags ect.)
@@ -316,28 +383,43 @@ contains
         pTemp % dir = dir
         pTemp % E   = E_out
         pTemp % wgt = wgt
+        pTemp % collisionN = 0
+
+        ! If storing precursors, do so when a finite lambda occurs
+        if (self % makePrec .and. lambda < huge(lambda)) then
+          pTemp % lambda = lambda
+          pTemp % type = P_PRECURSOR
+
+        end if
 
         call nextCycle % detain(pTemp)
         if (self % uniFissSites) call self % ufsField % storeFS(pTemp)
+
+        ! Report birth of new particle
+        call tally % reportSpawn(N_FISSION, p, pTemp)
 
       end do
     end if
 
     ! Perform implicit absorption
     if (self % implicitAbsorption) then
-      if(.not.fiss_and_implicit) then
-        call self % nuc % getMicroXSs(microXSs, p % E, p % pRNG)
+
+      if (.not.fiss_and_implicit) then
+        call self % nuc % getMicroXSs(microXSs, collDat % E, self % mat % kT, p % pRNG)
       end if
+
       sig_scatter  = microXSs % elasticScatter + microXSs % inelasticScatter
       sig_tot      = microXSs % total
       p % w        = p % w * sig_scatter/sig_tot
       ! Sample between elastic and inelastic
       totalElastic = microXSs % elasticScatter + microXSs % inelasticScatter
+
       if (p % pRNG % get() < microXSs % elasticScatter/totalElastic) then
         collDat % MT = N_N_elastic
       else
         collDat % MT = N_N_inelastic
       end if
+
     end if
 
   end subroutine implicit
@@ -345,9 +427,10 @@ contains
   !!
   !! Process capture reaction
   !!
-  subroutine capture(self, p, collDat, thisCycle, nextCycle)
+  subroutine capture(self, p, tally, collDat, thisCycle, nextCycle)
     class(neutronCEimp), intent(inout)   :: self
     class(particle), intent(inout)       :: p
+    type(tallyAdmin), intent(inout)      :: tally
     type(collisionData), intent(inout)   :: collDat
     class(particleDungeon),intent(inout) :: thisCycle
     class(particleDungeon),intent(inout) :: nextCycle
@@ -355,13 +438,14 @@ contains
     p % isDead =.true.
 
   end subroutine capture
-
+  
   !!
   !! Process fission reaction
   !!
-  subroutine fission(self, p, collDat, thisCycle, nextCycle)
+  subroutine fission(self, p, tally, collDat, thisCycle, nextCycle)
     class(neutronCEimp), intent(inout)   :: self
     class(particle), intent(inout)       :: p
+    type(tallyAdmin), intent(inout)      :: tally
     type(collisionData), intent(inout)   :: collDat
     class(particleDungeon),intent(inout) :: thisCycle
     class(particleDungeon),intent(inout) :: nextCycle
@@ -370,17 +454,25 @@ contains
     type(particleState)                  :: pTemp
     real(defReal),dimension(3)           :: r, dir, val
     integer(shortInt)                    :: n, i
-    real(defReal)                        :: wgt, rand1, E_out, mu, phi
-    real(defReal)                        :: sig_nufiss, sig_fiss, k_eff
+    real(defReal)                        :: wgt, rand1, E_out, mu, phi, lambda
+    real(defReal)                        :: sig_nufiss, sig_fiss, k_eff, kT, wD
     character(100),parameter             :: Here = 'fission (neutronCEimp_class.f90)'
 
     if (.not.self % implicitSites) then
+
       ! Obtain required data
       wgt   = p % w                ! Current weight
       k_eff = p % k_eff            ! k_eff for normalisation
       rand1 = p % pRNG % get()     ! Random number to sample sites
 
-      call self % nuc % getMicroXSs(microXSs, p % E, p % pRNG)
+      ! Retrieve cross section at the energy used for reaction sampling
+      if (p % T <= ZERO) then
+        kT = self % mat % kT
+      else
+        kT = p % T * kBoltzmannMeV
+      end if
+      call self % nuc % getMicroXSs(microXSs, collDat % E, kT, p % pRNG)
+
       sig_nufiss = microXSs % nuFission
       sig_fiss   = microXSs % fission
 
@@ -388,7 +480,7 @@ contains
       ! Support -ve weight particles
       ! Note change of denominator (sig_fiss) wrt implicit generation
       if (self % uniFissSites) then
-        val = self % ufsField % at(p)
+        val = self % ufsField % atP(p)
         n = int(abs( (wgt * sig_nufiss) / (sig_fiss * k_eff))*val(1)/val(2) + rand1, shortInt)
         wgt =  val(2)/val(1)
       else
@@ -407,9 +499,19 @@ contains
       r   = p % rGlobal()
 
       do i=1,n
-        call fiss % sampleOut(mu, phi, E_out, p % E, p % pRNG)
+        call fiss % sampleOut(mu, phi, E_out, p % E, p % pRNG, lambda)
+        
+        ! Skip if a delayed particle is produced in prompt-only mode
+        if (self % neglectDelayed .and. lambda < huge(lambda)) cycle
+        
+        ! If alpha, determine the weight of a delayed neutron
+        wD = ONE
+        if (abs(p % alpha) > ZERO .and. lambda < huge(lambda)) then
+          wD = lambda/(lambda + p % alpha)
+        end if
+        
         dir = rotateVector(p % dirGlobal(), mu, phi)
-
+        
         if (E_out > self % maxE) E_out = self % maxE
 
         ! Copy extra detail from parent particle (i.e. time, flags ect.)
@@ -419,10 +521,21 @@ contains
         pTemp % r   = r
         pTemp % dir = dir
         pTemp % E   = E_out
-        pTemp % wgt = wgt
+        pTemp % wgt = wgt * wD
+        pTemp % collisionN = 0
+
+        ! If storing precursors, do so when a finite lambda occurs
+        if (self % makePrec .and. lambda < huge(lambda)) then
+          pTemp % lambda = lambda
+          pTemp % type = P_PRECURSOR
+
+        end if
 
         call nextCycle % detain(pTemp)
         if (self % uniFissSites) call self % ufsField % storeFS(pTemp)
+
+        ! Report birth of new particle
+        call tally % reportSpawn(N_FISSION, p, pTemp)
 
       end do
     end if
@@ -436,9 +549,10 @@ contains
   !!
   !! All CE elastic scattering happens in the CM frame
   !!
-  subroutine elastic(self, p, collDat, thisCycle, nextCycle)
+  subroutine elastic(self, p, tally, collDat, thisCycle, nextCycle)
     class(neutronCEimp), intent(inout)     :: self
     class(particle), intent(inout)         :: p
+    type(tallyAdmin), intent(inout)      :: tally
     type(collisionData), intent(inout)     :: collDat
     class(particleDungeon),intent(inout)   :: thisCycle
     class(particleDungeon),intent(inout)   :: nextCycle
@@ -446,19 +560,29 @@ contains
     logical(defBool)                       :: isFixed, hasDBRC
     character(100),parameter :: Here = 'elastic (neutronCEimp_class.f90)'
 
+    ! Assess if thermal scattering data is needed or not
+    if (self % nuc % needsSabEl(p % E)) collDat % MT = N_N_ThermEL
+
     ! Get reaction
     reac => uncorrelatedReactionCE_CptrCast( self % xsData % getReaction(collDat % MT, collDat % nucIdx))
     if(.not.associated(reac)) call fatalError(Here,'Failed to get elastic neutron scatter')
 
     ! Scatter particle
     collDat % A =  self % nuc % getMass()
-    collDat % kT = self % nuc % getkT()
+
+    ! Retrieve kT from either material or nuclide
+    if (self % mat % useTMS(p % E)) then
+      collDat % kT = self % mat % kT
+    else
+      collDat % kT = self % nuc % getkT()
+    end if
+    if (p % T > ZERO) collDat % kT = p % T * kBoltzmannMeV
 
     ! Check is DBRC is on
     hasDBRC = self % nuc % hasDBRC()
 
-    isFixed = (.not. hasDBRC) .and. (p % E > collDat % kT * self % thresh_E) &
-              & .and. (collDat % A > self % thresh_A)
+    isFixed = (.not. hasDBRC) .and. (p % E > collDat % kT * self % threshE) &
+              & .and. (collDat % A > self % threshA)
 
     ! Apply criterion for Free-Gas vs Fixed Target scattering
     if (.not. reac % inCMFrame()) then
@@ -474,9 +598,10 @@ contains
   !!
   !! Process inelastic scattering
   !!
-  subroutine inelastic(self, p, collDat, thisCycle, nextCycle)
+  subroutine inelastic(self, p, tally, collDat, thisCycle, nextCycle)
     class(neutronCEimp), intent(inout)     :: self
     class(particle), intent(inout)         :: p
+    type(tallyAdmin), intent(inout)        :: tally
     type(collisionData), intent(inout)     :: collDat
     class(particleDungeon),intent(inout)   :: thisCycle
     class(particleDungeon),intent(inout)   :: nextCycle
@@ -484,7 +609,7 @@ contains
     character(100),parameter  :: Here =' inelastic (neutronCEimp_class.f90)'
 
     ! Invert inelastic scattering and Get reaction
-    collDat % MT = self % nuc % invertInelastic(p % E, p % pRNG)
+    collDat % MT = self % nuc % invertInelastic(collDat % E, p % pRNG)
     reac => uncorrelatedReactionCE_CptrCast( self % xsData % getReaction(collDat % MT, collDat % nucIdx))
     if(.not.associated(reac)) call fatalError(Here, "Failed to get scattering reaction")
 
@@ -504,9 +629,10 @@ contains
   !!
   !! Apply cutoffs
   !!
-  subroutine cutoffs(self, p, collDat, thisCycle, nextCycle)
+  subroutine cutoffs(self, p, tally, collDat, thisCycle, nextCycle)
     class(neutronCEimp), intent(inout)   :: self
     class(particle), intent(inout)       :: p
+    type(tallyAdmin), intent(inout)      :: tally
     type(collisionData), intent(inout)   :: collDat
     class(particleDungeon),intent(inout) :: thisCycle
     class(particleDungeon),intent(inout) :: nextCycle
@@ -514,29 +640,33 @@ contains
     real(defReal)                        :: minWgt, maxWgt, avWgt
 
     if (p % isDead) then
-    ! Do nothing
+
+      ! Do nothing !
 
     elseif (p % E < self % minE) then
       p % isDead = .true.
 
     ! Weight Windows treatment
     elseif (self % weightWindows) then
-      val = self % weightWindowsMap % at(p)
+      val = self % weightWindowsMap % atP(p)
       minWgt = val(1)
       maxWgt = val(2)
       avWgt  = val(3)
 
       ! If a particle is outside the WW map and all the weight limits
       ! are zero nothing happens. NOTE: this holds for positive weights only
-      if ((p % w > maxWgt) .and. (maxWgt /= ZERO)) then
-        call self % split(p, thisCycle, maxWgt)
+
+      if ((p % w > maxWgt) .and. (maxWgt /= ZERO) .and. (p % splitCount < self % maxSplit)) then
+        call self % split(p, tally, thisCycle, maxWgt)
+
       elseif (p % w < minWgt) then
         call self % russianRoulette(p, avWgt)
+
       end if
 
     ! Splitting with fixed threshold
     elseif ((self % splitting) .and. (p % w > self % maxWgt)) then
-      call self % split(p, thisCycle, self % maxWgt)
+      call self % split(p, tally, thisCycle, self % maxWgt)
 
     ! Roulette with fixed threshold and survival weight
     elseif ((self % roulette) .and. (p % w < self % minWgt)) then
@@ -565,23 +695,40 @@ contains
   !!
   !! Split particle which has too large a weight
   !!
-  subroutine split(self, p, thisCycle, maxWgt)
+  subroutine split(self, p, tally, thisCycle, maxWgt)
     class(neutronCEimp), intent(inout)    :: self
     class(particle), intent(inout)        :: p
+    type(tallyAdmin), intent(inout)       :: tally
     class(particleDungeon), intent(inout) :: thisCycle
     real(defReal), intent(in)             :: maxWgt
+    type(particleState)                   :: pTemp
     integer(shortInt)                     :: mult, i
 
     ! This value must be at least 2
     mult = ceiling(p % w/maxWgt)
 
-    ! Decrease weight
-    p % w = p % w/mult
+    ! Limit maximum split
+    if (mult + p % splitCount > self % maxSplit) then
+      mult = self % maxSplit - p % splitCount + 1
+    end if
+
+    ! Copy particle to a particle state
+    ! Note that particleState doesn't have property splitCount, so it is reset
+    ! to 0 for the new particle
+    pTemp = p
+    pTemp % wgt = p % w/mult
 
     ! Add split particle's to the dungeon
-    do i = 1,mult-1
-      call thisCycle % detain(p)
+    do i = 1, mult-1
+      call thisCycle % detain(pTemp)
+      call tally % reportSpawn(N_N_SPLIT, p, pTemp)
     end do
+
+    ! Update particle split count
+    p % splitCount = p % splitCount + mult
+
+    ! Decrease original particle weight
+    p % w = p % w/mult
 
   end subroutine split
 
@@ -636,7 +783,7 @@ contains
     ! Save incident energy
     E_out = p % E
 
-    if( MT == N_N_elastic) then
+    if (MT == N_N_elastic) then
       call asymptoticScatter(E_out, mu, collDat % A)
 
     else
@@ -695,7 +842,7 @@ contains
 
       ! Assign pointer for the 0K nuclide
       ceNuc0K => ceNeutronNuclide_CptrCast(self % xsData % getNuclide(nucIdx))
-      if(.not.associated(ceNuc0K)) call fatalError(Here, 'Failed to retrieve CE Neutron Nuclide')
+      if (.not.associated(ceNuc0K)) call fatalError(Here, 'Failed to retrieve CE Neutron Nuclide')
 
       ! Get elastic scattering 0K majorant
       maj = self % xsData % getScattMicroMajXS(p % E, kT, A, nucIdx)

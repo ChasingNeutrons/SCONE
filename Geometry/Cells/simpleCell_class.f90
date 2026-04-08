@@ -6,24 +6,10 @@ module simpleCell_class
   use dictionary_class,   only : dictionary
   use surfaceShelf_class, only : surfaceShelf
   use surface_inter,      only : surface
-  use cell_inter,         only : cell, kill_super => kill
+  use cell_inter,         only : cell, surfInfo, kill_super => kill
 
   implicit none
   private
-
-  !!
-  !! Local type to hold pointer to a surface together with a halfspace information
-  !!
-  !! Public Members:
-  !!   surfIdx -> Index of the surface (+ve if +ve halspace is used to define the
-  !!     cell, -ve otherwise)
-  !!   ptr -> Pointer to a surface
-  !!
-  type :: surfInfo
-    integer(shortInt)       :: surfIdx = 0
-    class(surface), pointer :: ptr => null()
-  end type
-
 
   !!
   !! CSG cell defined by intersection of halfspaces
@@ -53,6 +39,7 @@ module simpleCell_class
     procedure :: init
     procedure :: inside
     procedure :: distance
+    procedure :: getNormal
     procedure :: kill
   end type simpleCell
 
@@ -96,7 +83,7 @@ contains
   end subroutine init
 
   !!
-  !! Return TRUE is position is inside the cell
+  !! Return .true. if position is inside the cell
   !!
   !! See cell_inter for details
   !!
@@ -108,7 +95,7 @@ contains
     integer(shortInt)                       :: i
     logical(defBool)                        :: halfspace, sense
 
-    ! Keep compiler happy (in immpossible case of cell with no surfaces)
+    ! Keep compiler happy (in impossible case of cell with no surfaces)
     isIt = .false.
 
     do i= 1, size(self % surfaces)
@@ -147,11 +134,41 @@ contains
       ! Select minimum distance
       if (test_d < d) then
         d = test_d
-        surfIdx = i
+        surfIdx = abs(self % surfaces(i) % surfIdx)
       end if
     end do
 
   end subroutine distance
+  
+  !!
+  !! Return normal of surfIdx at given co-ordinate
+  !!
+  !! See cell_inter for details
+  !!
+  function getNormal(self, surfIdx, r, u) result(normal)
+    class(simpleCell), intent(in)           :: self
+    integer(shortInt), intent(in)           :: surfIdx
+    real(defReal), dimension(3), intent(in) :: r
+    real(defReal), dimension(3), intent(in) :: u
+    real(defReal), dimension(3)             :: normal
+    integer(shortInt)                       :: i
+    character(100), parameter :: Here = 'getNormal (simpleCell_class.f90)'
+
+    ! To avoid compiler warnings
+    normal = ZERO
+
+    do i = 1, size(self % surfaces)
+      if (abs(self % surfaces(i) % surfIdx) == surfIdx) then
+        normal = self % surfaces(i) % ptr % normal(r, u)
+        return
+      end if
+    end do
+
+    ! Matching surface wasn't found
+    print *, size(self% surfaces)
+    call fatalError(Here,'Provided surfIdx is not a member of the cell: '//numToChar(surfIdx))
+
+  end function getNormal
 
   !!
   !! Return to uninitialised state

@@ -10,17 +10,33 @@ codes suitable for design calculations.
 
 SCONE documentation is hosted at: <https://scone.readthedocs.io>
 
+To cite SCONE, please use the following:
+```bibtex
+@article{sconeANE,
+  title   = {Status of the SCONE Monte Carlo neutron transport code},
+  journal = {Annals of Nuclear Energy},
+  volume  = {227},
+  pages   = {112015},
+  year    = {2026},
+  issn    = {0306-4549},
+  doi     = {10.1016/j.anucene.2025.112015},
+  url     = {https://www.sciencedirect.com/science/article/pii/S0306454925008321},
+  author  = {Valeria Raffuzzi and Paul Cosgrove and Mikolaj Adam Kowalski},
+  keywords = {SCONE, Monte Carlo, Neutron transport},
+}
+```
+
 ## Prerequisites
 Required
 
 * Cmake (>=3.10)
-* Fortran compiler, gfortran (>=6.3)
+* Fortran compiler, gfortran (>=8.3)
 * LAPACK and BLAS Libraries
 * GNU/Linux operating system
 
 Optional
 
-* pFUnit test framework
+* pFUnit 4 test framework
 * Python 3 interpreter
 
 ## Installation

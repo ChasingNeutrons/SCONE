@@ -3,6 +3,7 @@ module collisionProbabilityClerk_class
   use numPrecision
   use tallyCodes
   use genericProcedures,          only : fatalError
+  use display_func,               only : statusMsg
   use dictionary_class,           only : dictionary
   use particle_class,             only : particle, particleState
   use particleDungeon_class,      only : particleDungeon
@@ -20,9 +21,6 @@ module collisionProbabilityClerk_class
   ! Tally Maps
   use tallyMap_inter,             only : tallyMap
   use tallyMapFactory_func,       only : new_tallyMap
-
-  ! Tally Response
-  !use macroResponse_class,        only : macroResponse
 
   implicit none
   private
@@ -45,13 +43,13 @@ module collisionProbabilityClerk_class
   !!    -> CPM is stored in column-major order [prodBin, startBin].
   !!    -> CPs are only non-zero within an energy group. It may be more efficient to
   !!       define a slightly different CPClerk which has a separate map for energy.
-  !!       With a fine energy and space discretisation, a large sparse matrix will be 
+  !!       With a fine energy and space discretisation, a large sparse matrix will be
   !!       produced by the current clerk which could be avoided with a slightly different
   !!       implementation.
   !!
   !! Private Members:
   !!   map      -> Map to divide phase-space into bins
-  !!   resp     -> Response for transfer function 
+  !!   resp     -> Response for transfer function
   !!               (Not presently used, would be macroTotal by default)
   !!   N        -> Number of Bins
   !!
@@ -72,7 +70,6 @@ module collisionProbabilityClerk_class
     integer(shortInt)                      :: N = 0 !! Number of bins
     !type(macroResponse)                    :: resp
 
-
   contains
     ! Procedures used during build
     procedure  :: init
@@ -81,7 +78,7 @@ module collisionProbabilityClerk_class
 
     ! File reports and check status -> run-time procedures
     procedure  :: reportInColl
-    procedure  :: reportCycleEnd
+    procedure  :: closeCycle
 
     ! Overwrite default run-time result procedure
     procedure  :: getResult
@@ -92,6 +89,7 @@ module collisionProbabilityClerk_class
 
     ! Deconstructor
     procedure  :: kill
+
   end type collisionProbabilityClerk
 
   !!
@@ -146,7 +144,7 @@ contains
     class(collisionProbabilityClerk),intent(in) :: self
     integer(shortInt),dimension(:),allocatable  :: validCodes
 
-    validCodes = [inColl_CODE, cycleEnd_Code]
+    validCodes = [inColl_CODE, closeCycle_CODE]
 
   end function validReports
 
@@ -185,24 +183,25 @@ contains
     if (virtual) return
 
     ! Get material or return if it is not a neutron
-    mat    => neutronMaterial_CptrCast( xsData % getMaterial(p % matIdx()))
+    mat => neutronMaterial_CptrCast(xsData % getMaterial(p % matIdx()))
 
-    if(.not.associated(mat)) return
+    if (.not.associated(mat)) return
 
     ! Find starting index in the map
     ! It is important that preCollision is not changed by a collisionProcessor
-    !before the particle is fed to the tally, otherwise results will be meaningless
-    sIdx = self % map % map( p % preCollision)
+    ! before the particle is fed to the tally, otherwise results will be meaningless
+    sIdx = self % map % map(p % preCollision)
 
     ! Find collision index in the map
     state = p
     cIdx = self % map % map(state)
 
+
     ! Invalid indices are allowed given that CPs must sum to one - this will include
     ! neutrons which collide outside the mapped region of phase space
     ! These correspond to index = 0
 
-    ! Calculate collision probability 
+    ! Calculate collision probability
     ! Used the simple estimator - the commented line can allow CP to generalise to
     ! other responses
     ! For collision probability, top and bottom will cancel -- for other probabilities,
@@ -210,7 +209,6 @@ contains
     !score = self % resp % get(p, xsData) * p % w / xsData % getTotalMatXS(p, p % matIdx())
     score = p % w
 
-    ! I think this is right but I need to double check!
     ! Score element of the matrix
     addr = self % getMemAddress() + sIdx * self % N + cIdx
     call mem % score(score, addr)
@@ -222,7 +220,7 @@ contains
   !!
   !! See tallyClerk_inter for details
   !!
-  subroutine reportCycleEnd(self, end, mem)
+  subroutine closeCycle(self, end, mem)
     class(collisionProbabilityClerk), intent(inout) :: self
     class(particleDungeon), intent(in)              :: end
     type(scoreMemory), intent(inout)                :: mem
@@ -230,7 +228,8 @@ contains
     integer(longInt)                                :: addrCPM, addrCPM0
     real(defReal)                                   :: val, normFactor
 
-    if(mem % lastCycle()) then
+    if (mem % lastCycle()) then
+
       ! Set address to the start of collision probability matrix
       ! Decrease by 1 to get correct address on the first iteration of the loop
       addrCPM  = self % getMemAddress() - 1
@@ -248,7 +247,7 @@ contains
           normFactor = normFactor + val
         end do
 
-        if(normFactor /= ZERO) normFactor = ONE / normFactor
+        if (normFactor /= ZERO) normFactor = ONE / normFactor
 
         ! Normalise CPM column
         do j = 1, self % N
@@ -259,7 +258,7 @@ contains
       end do
     end if
 
-  end subroutine reportCycleEnd
+  end subroutine closeCycle
 
   !!
   !! Return result from the clerk for interaction with Physics Package
@@ -280,7 +279,7 @@ contains
     ! Allocate result to CPMresult
     ! Do not deallocate if already allocated to CPMresult
     ! Its not too nice -> clean up
-    if(allocated(res)) then
+    if (allocated(res)) then
       select type(res)
         class is (CPMresult)
           ! Do nothing
@@ -324,6 +323,7 @@ contains
         end do
 
     end select
+
   end subroutine getResult
 
   !!
@@ -335,7 +335,7 @@ contains
     class(collisionProbabilityClerk), intent(in) :: self
     type(scoreMemory), intent(in)                :: mem
 
-    print *, 'collisionProbabilityClerk does not support display yet'
+    call statusMsg('collisionProbabilityClerk does not support display yet')
 
   end subroutine display
 

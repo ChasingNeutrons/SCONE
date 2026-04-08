@@ -2,10 +2,9 @@ module sphere_class
 
   use numPrecision
   use universalVariables, only : INF, SURF_TOL
-  use genericProcedures,  only : fatalError, dotProduct, numToChar
+  use genericProcedures,  only : fatalError, numToChar
   use dictionary_class,   only : dictionary
-  use surface_inter,      only : kill_super => kill
-  use quadSurface_inter,  only : quadSurface
+  use surface_inter,      only : surface, kill_super => kill
 
   implicit none
   private
@@ -35,7 +34,7 @@ module sphere_class
   !! Interface:
   !!   surface interface
   !!
-  type, public, extends(quadSurface) :: sphere
+  type, public, extends(surface) :: sphere
     private
     real(defReal), dimension(3) :: origin = ZERO
     real(defReal)               :: r      = ZERO
@@ -48,6 +47,7 @@ module sphere_class
     procedure :: evaluate
     procedure :: distance
     procedure :: going
+    procedure :: normal
     procedure :: kill
   end type sphere
 
@@ -135,7 +135,7 @@ contains
 
     diff = r - self % origin
 
-    c = dotProduct(diff, diff) - self % r_sq
+    c = dot_product(diff, diff) - self % r_sq
 
   end function evaluate
 
@@ -158,7 +158,7 @@ contains
 
     ! Calculate quadratic components
     c = self % evaluate(r)
-    k = dotProduct(r - self % origin, u)
+    k = dot_product(r - self % origin, u)
     delta = k*k - c  ! Technically delta/4
 
     ! Calculate the distance
@@ -193,9 +193,24 @@ contains
     real(defReal), dimension(3), intent(in) :: u
     logical(defBool)                        :: halfspace
 
-    halfspace = dotProduct(r - self % origin, u) >= ZERO
+    halfspace = dot_product(r - self % origin, u) >= ZERO
 
   end function going
+  
+  !!
+  !! Return the normal corresponding to the sphere surface
+  !!
+  pure function normal(self, r, u) result(n)
+    class(sphere), intent(in)               :: self
+    real(defReal), dimension(3), intent(in) :: r
+    real(defReal), dimension(3), intent(in) :: u
+    real(defReal), dimension(3)             :: n
+
+    n = r - self % origin
+    n = n / norm2(n)
+
+  end function normal
+
 
   !!
   !! Return to uninitialised state

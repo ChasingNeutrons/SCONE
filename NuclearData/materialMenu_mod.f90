@@ -1,13 +1,14 @@
 !!
-!! Material Menu is a module (Singleton) that contains global definitions of diffrent materials
+!! Material Menu is a module (Singleton) that contains global definitions of different materials
 !!
 !! It exists to make it easier for all databases to refer to the same materials by the same
-!! name and index. This is necessary to avoid confusion resulting from diffrent materials with the
-!! same name or index in diffrent databases.
+!! name and index. This is necessary to avoid confusion resulting from different materials with the
+!! same name or index in different databases.
 !!
 !! Public Members:
 !!   materialDefs -> array of material definitions of type materialItem
 !!   nameMap      -> Map that maps material name to matIdx
+!!   colourMap    -> Map that maps matIdx to 24bit colour (to use for visualisation)
 !!
 !! Interface:
 !!   init      -> Load material definitions from a dictionary
@@ -21,8 +22,10 @@
 module materialMenu_mod
 
   use numPrecision
-  use universalVariables, only : NOT_FOUND, VOID_MAT, OUTSIDE_MAT
+  use universalVariables, only : NOT_FOUND, VOID_MAT, OUTSIDE_MAT, UNDEF_MAT, OVERLAP_MAT
   use genericProcedures,  only : fatalError, charToInt, numToChar
+  use colours_func,       only : rgb24bit
+  use intMap_class,       only : intMap
   use charMap_class,      only : charMap
   use dictionary_class,   only : dictionary
 
@@ -33,14 +36,18 @@ module materialMenu_mod
   !! Information about a single nuclide
   !!
   !! Based somewhat on MCNP conventions.
-  !! Atomic and Mass number identify cleary a nuclide species
+  !! Atomic and Mass number identify clearly a nuclide species
   !! Evaluation number T allows to refer to multiple states/evaluations of the same nuclide species
-  !! E.G. at a Diffrent temperature as in MCNP Library.
+  !! E.G. at a Different temperature as in MCNP Library.
   !!
   !! Public members:
   !!   Z -> Atomic number
   !!   A -> Mass number
   !!   T -> Evaluation number
+  !!   hasSab -> Does the nuclide have S(a,b) data?
+  !!   sabMix -> Does the nuclide mix S(a,b) data?
+  !!   file_Sab1 -> First (and maybe only) S(a,b) file
+  !!   file_Sab2 -> Second S(a,b) file
   !!
   !! Interface:
   !!   init -> build from a string
@@ -50,7 +57,9 @@ module materialMenu_mod
     integer(shortInt)  :: A = -1
     integer(shortInt)  :: T = -1
     logical(defBool)   :: hasSab = .false.
-    character(nameLen) :: file_Sab
+    logical(defBool)   :: sabMix = .false.
+    character(nameLen) :: file_Sab1
+    character(nameLen) :: file_Sab2
   contains
     procedure :: init   => init_nuclideInfo
     procedure :: toChar => toChar_nuclideInfo
@@ -76,18 +85,33 @@ module materialMenu_mod
   !!
   !!   matDef {
   !!     temp 273;
-  !!     moder {1001.03 h-h2o.43;}
+  !!     #moder {1001.03 (h-h2o.43);}#
+  !!     #tms 1;#
   !!     composition {
   !!       1001.03  5.028E-02;
   !!       8016.03  2.505E-02;
   !!       5010.03  2.0E-005;
   !!     }
   !!     xsFile /home/uberMoffTarkin/XS/mat1.xs;
+  !!     #rgb (255 0 0); # // RGB colour to be used in visualisation
+  !!   }
+  !!
+  !! Sample with stochastic mixing:
+  !!   matDef {
+  !!     temp 300;
+  !!     moder {1001.03 (h-h2o.43 h-h2o.53);}
+  !!     composition {
+  !!       1001.03  5.028E-02;
+  !!       8016.03  2.505E-02;
+  !!       5010.03  2.0E-005;
+  !!     }
   !!   }
   !!
   !! NOTE: the moder dictionary is optional, necessary only if S(a,b) thermal scattering
   !!       data are used. If some nuclides are included in moder but not in composition,
-  !!       those are ignored.
+  !!       an error is raised.
+  !!       Including two entries in moder will invoke stochastic mixing, i.e.,
+  !!       stochastic interpolation between the two data libraries.
   !!
   type, public :: materialItem
     character(nameLen)                         :: name   = ''
@@ -96,15 +120,24 @@ module materialMenu_mod
     real(defReal),dimension(:),allocatable     :: dens
     type(nuclideInfo),dimension(:),allocatable :: nuclides
     type(dictionary)                           :: extraInfo
+    logical(defBool)                           :: hasTMS = .false.
   contains
     procedure :: init    => init_materialItem
     procedure :: kill    => kill_materialItem
     procedure :: display => display_materialItem
   end type materialItem
 
-!! MODULE COMPONENTS
+  !! Parameters
+  integer(shortInt), parameter :: COL_OUTSIDE = int(z'ffffff', shortInt)
+  integer(shortInt), parameter :: COL_VOID    = int(z'000000', shortInt)
+  integer(shortInt), parameter :: COL_UNDEF   = int(z'00ff00', shortInt)
+  integer(shortInt), parameter :: COL_OVERLAP = int(z'ff0000', shortInt)
+
+
+  !! MODULE COMPONENTS
   type(materialItem),dimension(:),allocatable,target,public :: materialDefs
-  type(charMap),target,public                               :: nameMap
+  type(charMap), target, public                             :: nameMap
+  type(intMap), public                                      :: colourMap
 
   public :: init
   public :: kill
@@ -131,7 +164,7 @@ contains
     integer(shortInt)                           :: i
     character(nameLen)                          :: temp
 
-    ! Clean whatever may be alrady present
+    ! Clean whatever may be already present
     call kill()
 
     ! Load all material names
@@ -142,17 +175,23 @@ contains
 
     ! Load definitions
     do i=1,size(matNames)
-      call materialDefs(i) % init(matNames(i), dict % getDictPtr(matNames(i)))
-      materialDefs(i) % matIdx = i
+      call materialDefs(i) % init(matNames(i), i, dict % getDictPtr(matNames(i)))
       call nameMap % add(matNames(i), i)
     end do
 
-    ! Add special Material keywords to thedictionary
+    ! Add special Material keywords to the dictionary
     temp = 'void'
     call nameMap % add(temp, VOID_MAT)
     temp = 'outside'
     call nameMap % add(temp, OUTSIDE_MAT)
+    temp = 'overlap'
+    call nameMap % add(temp, OVERLAP_MAT)
 
+    !! Load colours for the special materials
+    call colourMap % add(VOID_MAT, COL_VOID)
+    call colourMap % add(OUTSIDE_MAT, COL_OUTSIDE)
+    call colourMap % add(UNDEF_MAT, COL_UNDEF)
+    call colourMap % add(OVERLAP_MAT, COL_OVERLAP)
 
   end subroutine init
 
@@ -186,11 +225,13 @@ contains
 
     print '(A60)', repeat('<>',30)
     print '(A)', "^^ MATERIAL DEFINITIONS ^^"
+
     do i = 1,size(materialDefs)
       call materialDefs(i) % display()
       ! Print separation line
       print '(A)', " ><((((*>  +  <*))))><"
     end do
+
     print '(A60)', repeat('<>',30)
 
   end subroutine display
@@ -204,7 +245,7 @@ contains
   !! Result:
   !!   nameLen long character with material name
   !!
-  !! Erorrs:
+  !! Error:
   !!   If idx is -ve or larger then number of defined materials
   !!   Empty string '' is returned as its name
   !!
@@ -250,26 +291,40 @@ contains
   !!
   !! Args:
   !!   name [in] -> character with material name
+  !!   idx  [in] -> material index
   !!   dict [in] -> dictionary with material definition
   !!
   !! Errors:
   !!   FatalError if dictionary does not contain valid material definition.
   !!
-  subroutine init_materialItem(self, name, dict)
-    class(materialItem), intent(inout)          :: self
-    character(nameLen),intent(in)               :: name
-    class(dictionary), intent(in)               :: dict
-    character(nameLen),dimension(:),allocatable :: keys, moderKeys
-    integer(shortInt)                           :: i
-    class(dictionary),pointer                   :: compDict, moderDict
-    logical(defBool)                            :: hasSab
+  subroutine init_materialItem(self, name, idx, dict)
+    class(materialItem), intent(inout)            :: self
+    character(nameLen), intent(in)                :: name
+    integer(shortInt), intent(in)                 :: idx
+    class(dictionary), intent(in)                 :: dict
+    character(nameLen), dimension(:), allocatable :: keys, moderKeys, filenames
+    integer(shortInt), dimension(:), allocatable  :: temp
+    integer(shortInt)                             :: i, nSab, foundModer
+    class(dictionary),pointer                     :: compDict, moderDict
+    character(100), parameter :: Here = 'init_materialItem (materialMenu_mod.f90)'
 
     ! Return to initial state
     call self % kill()
 
-    ! Load easy components c
+    ! Load easy components properties
     self % name = name
-    call dict % get(self % T,'temp')
+    self % matIdx = idx
+
+    ! Check TMS flag and read temperature
+    call dict % getOrDefault(self % hasTMS, 'tms', .false.)
+
+    if (self % hasTMS .and. .not. dict % isPresent('temp')) then
+      call fatalError(Here, 'The material temperature must be specified when TMS is on')
+    end if
+
+    call dict % getOrDefault(self % T, 'temp', ZERO)
+    if (self % T < ZERO) call fatalError(Here, 'The temperature of material '//numToChar(idx)//&
+                                                ' is negative: '//numToChar(self % T))
 
     ! Get composition dictionary and load composition
     compDict => dict % getDictPtr('composition')
@@ -279,26 +334,62 @@ contains
     allocate(self % nuclides(size(keys)))
     allocate(self % dens(size(keys)))
 
-    hasSab = .false.
-    ! Check if S(a,b) files are specified
+    ! Check if S(a,b) files are specified.
     if (dict % isPresent('moder')) then
       moderDict => dict % getDictPtr('moder')
       call moderDict % keys(moderKeys)
-      hasSab = .true.
+      nSab = size(moderKeys)
+    else
+      nSab = 0
     end if
 
     ! Load definitions
+    foundModer = 0
     do i =1,size(keys)
       ! Check if S(a,b) is on and required for that nuclide
-      if (hasSab .and. moderDict % isPresent(keys(i))) then
+      if ((nSab > 0) .and. moderDict % isPresent(keys(i))) then
         self % nuclides(i) % hasSab = .true.
-        call moderDict % get(self % nuclides(i) % file_Sab, keys(i))
+        foundModer = foundModer + 1
+
+        ! Check for stochastic mixing - this will depend on the
+        ! size of the array of files produce
+        call moderDict % get(filenames, keys(i))
+        if (size(filenames) == 2) then
+          self % nuclides(i) % file_Sab1 = filenames(1)
+          self % nuclides(i) % file_Sab2 = filenames(2)
+          self % nuclides(i) % sabMix = .true.
+        elseif (size(filenames) == 1) then
+          self % nuclides(i) % file_Sab1 = filenames(1)
+        else
+          print *,filenames
+          call fatalError(Here,'Unexpectedly long moder contents. Should be 1 or 2 '//&
+                  'entries.')
+        end if
       end if
 
       ! Initialise the nuclides
       call compDict % get(self % dens(i), keys(i))
       call self % nuclides(i) % init(keys(i))
     end do
+
+    ! Make sure if a moderator is provided the nuclide is present
+    ! in the composition
+    if (foundModer /= nSab) then
+      print *,moderKeys
+      call fatalError(Here, 'Nuclides requested for S(alpha,beta) are not present in composition. '// &
+              numToChar(nSab)//' nuclides requested but '//numToChar(foundModer)//' nuclides found.')
+    end if
+
+    ! Add colour info if present
+    if(dict % isPresent('rgb')) then
+      call dict % get(temp, 'rgb')
+
+      if (size(temp) /= 3) then
+        call fatalError(Here, "'rgb' keyword must have 3 values")
+      end if
+
+      call colourMap % add(idx, rgb24bit(temp(1), temp(2), temp(3)))
+    end if
 
     ! Save dictionary
     self % extraInfo = dict
@@ -392,7 +483,7 @@ contains
     za = verify(key(1:L),'0123456789')
     tt = verify(key(1:L),'0123456789', back = .true.)
 
-    ! Verify that the location of the dot is consistant
+    ! Verify that the location of the dot is consistent
     isIt = dot == za .and. dot == tt
 
   end function isNucDefinition
@@ -422,6 +513,9 @@ contains
     ! Find location of the dot
     dot = scan(str,'.')
 
+    ! Catch leading zeros in ZAID
+    if (str(1:1) == '0') call fatalError(Here, 'ZA ID begins with a 0')
+
     self % Z = charToInt(str(1:dot-4), error = flag)
     self % A = charToInt(str(dot-3:dot-1), error = flag )
     self % T = charToInt(str(dot+1:len_trim(str)), error = flag)
@@ -437,7 +531,7 @@ contains
   !!   None
   !!
   !! Result:
-  !!   Character in format ZZAAA.TT that dscribes nuclide definition
+  !!   Character in format ZZAAA.TT that describes nuclide definition
   !!
   !! Errors:
   !!   None
@@ -461,17 +555,17 @@ contains
   !! Get pointer to a material definition under matIdx
   !!
   !! Args:
-  !!   matIdx [in] -> Index of the material
+  !!   idx [in] -> Index of the material
   !!
   !! Result:
   !!   Pointer to a materialItem with the definition
   !!
   !! Errors:
-  !!   FatalError if matIdx does not correspond to any defined material
+  !!   FatalError if idx does not correspond to any defined material
   !!   FatalError if material definitions were not loaded
   !!
-  function getMatPtr(matIdx) result(ptr)
-    integer(shortInt), intent(in) :: matIdx
+  function getMatPtr(idx) result(ptr)
+    integer(shortInt), intent(in) :: idx
     type(materialItem), pointer   :: ptr
     character(100), parameter :: Here = 'getMatPtr (materialMenu_mod.f90)'
 
@@ -481,13 +575,13 @@ contains
     end if
 
     ! Verify matIdx
-    if( matIdx <= 0 .or. matIdx > nMat()) then
-      call fatalError(Here,"matIdx: "//numToChar(matIdx)// &
+    if( idx <= 0 .or. idx > nMat()) then
+      call fatalError(Here,"matIdx: "//numToChar(idx)// &
                            " does not correspond to any defined material")
     end if
 
     ! Attach pointer
-    ptr => materialDefs(matIdx)
+    ptr => materialDefs(idx)
 
   end function getMatPtr
 

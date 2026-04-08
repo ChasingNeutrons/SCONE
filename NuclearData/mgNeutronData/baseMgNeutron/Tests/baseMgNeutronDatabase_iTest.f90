@@ -2,10 +2,12 @@ module baseMgNeutronDatabase_iTest
 
   use numPrecision
   use endfConstants
-  use pFUnit_mod
+  use universalVariables
+  use funit
   use dictionary_class,   only : dictionary
   use dictParser_func,    only : charToDict
-  use particle_class,     only : particle
+  use particle_class,     only : particle, P_NEUTRON
+  use RNG_class,          only : RNG
 
   ! Nuclear Data Objects & Interfaces
   use baseMgNeutronDatabase_class, only : baseMgNeutronDatabase, baseMgNeutronDatabase_CptrCast, &
@@ -29,20 +31,20 @@ module baseMgNeutronDatabase_iTest
 
   ! Material definitions
   character(*),parameter :: MAT_INPUT_STR = "   &
-  mat1 { temp 273;                              &
-         composition {                          &
-         1001.03 5.028E-02;                     &
-         8016.03 2.505E-02;                     &
-         }                                      &
-         xsFile ./IntegrationTestFiles/mgMat1;  &
-       }                                        &
-  mat2  { temp 1;                               &
-          composition {                         &
-          92233.03 2.286E-02;                   &
-          8016.03  4.572E-02;                   &
-          }                                     &
-          xsFile ./IntegrationTestFiles/mgMat2; &
-        }"
+  &mat1 { temp 273;                              &
+  &       composition {                          &
+  &       1001.03 5.028E-02;                     &
+  &       8016.03 2.505E-02;                     &
+  &       }                                      &
+  &       xsFile ./IntegrationTestFiles/mgMat1;  &
+  &     }                                        &
+  &mat2  { temp 1;                               &
+  &        composition {                         &
+  &        92233.03 2.286E-02;                   &
+  &        8016.03  4.572E-02;                   &
+  &        }                                     &
+  &        xsFile ./IntegrationTestFiles/mgMat2; &
+  &      }"
 
 
 contains
@@ -58,11 +60,11 @@ contains
     type(dictionary)                     :: matMenuDict
     type(particle)                       :: p
     type(neutronMacroXSs)                :: xss
+    type(RNG), target                    :: pRNG
     type(baseMgNeutronMaterial),pointer  :: mat
     class(baseMgNeutronMaterial),pointer :: matClass
     class(reactionHandle), pointer       :: reac
     real(defReal),parameter :: TOL = 1.0E-6_defReal
-
 
     data_ptr => database
 
@@ -74,14 +76,17 @@ contains
     call databaseDef % init(1)
     call databaseDef % store('PN','P0')
     call database % init(databaseDef, data_ptr, silent = .true.)
-    call database % activate([1])
+    call database % activate([1], silent = .true.)
 
     ! Varify number of groups
     @assertEqual(4, database % nGroups())
 
     ! Test getting Transport XS
+    ! Associate pointer to pass tests in debug mode
+    p % pRNG => pRNG
+    p % type = P_NEUTRON
     p % G = 1
-    @assertEqual(2.1_defReal, database % getTransMatXS(p, 1), TOL)
+    @assertEqual(2.1_defReal, database % getTrackingXS(p, 1, MATERIAL_XS), TOL)
 
     ! Test getting Total XS
     p % G = 1
@@ -93,7 +98,7 @@ contains
     ! Test getting Majorant
     p % G = 1
     @assertEqual(2.1_defReal, database % getMajorantXS(p), TOL)
-
+    @assertEqual(2.1_defReal, database % getTrackingXS(p, 1, MAJORANT_XS), TOL)
 
     ! Get a material and verify macroXSS
     mat => baseMgNeutronMaterial_TptrCast(database % getMaterial(2))
@@ -109,6 +114,7 @@ contains
     @assertEqual(1.0_defReal, xss % capture, TOL)
     @assertEqual(1.0_defReal, xss % fission, TOL)
     @assertEqual(2.3_defReal, xss % nuFission, TOL)
+    @assertEqual(202.0_defReal, xss % kappaXS, TOL)
 
     matClass => baseMgNeutronMaterial_CptrCast(database % getMaterial(1))
     @assertTrue(associated(matClass), "Type Ptr Cast has failed")
@@ -122,6 +128,7 @@ contains
     @assertEqual(4.0_defReal, xss % capture, TOL)
     @assertEqual(0.0_defReal, xss % fission, TOL)
     @assertEqual(0.0_defReal, xss % nuFission, TOL)
+    @assertEqual(0.0_defReal, xss % kappaXS, TOL)
 
     ! Get some invalid Materials
     mat => baseMgNeutronMaterial_TptrCast(database % getMaterial(0))
@@ -184,11 +191,11 @@ contains
     type(dictionary)                     :: matMenuDict
     type(particle)                       :: p
     type(neutronMacroXSs)                :: xss
+    type(RNG), target                    :: pRNG
     type(baseMgNeutronMaterial),pointer  :: mat
     class(baseMgNeutronMaterial),pointer :: matClass
     class(reactionHandle), pointer       :: reac
     real(defReal),parameter :: TOL = 1.0E-6_defReal
-
 
     data_ptr => database
 
@@ -200,14 +207,17 @@ contains
     call databaseDef % init(1)
     call databaseDef % store('PN','P1')
     call database % init(databaseDef, data_ptr, silent = .true.)
-    call database % activate([1])
+    call database % activate([1], silent = .true.)
 
     ! Varify number of groups
     @assertEqual(4, database % nGroups())
 
     ! Test getting Transport XS
+    ! Associate pointer to pass tests in debug mode
+    p % pRNG => pRNG
+    p % type = P_NEUTRON
     p % G = 1
-    @assertEqual(2.1_defReal, database % getTransMatXS(p, 1), TOL)
+    @assertEqual(2.1_defReal, database % getTrackingXS(p, 1, MATERIAL_XS), TOL)
 
     ! Test getting Total XS
     p % G = 1
@@ -219,7 +229,7 @@ contains
     ! Test getting Majorant
     p % G = 1
     @assertEqual(2.1_defReal, database % getMajorantXS(p), TOL)
-
+    @assertEqual(2.1_defReal, database % getTrackingXS(p, 1, MAJORANT_XS), TOL)
 
     ! Get a material and verify macroXSS
     mat => baseMgNeutronMaterial_TptrCast(database % getMaterial(2))
@@ -235,6 +245,7 @@ contains
     @assertEqual(1.0_defReal, xss % capture, TOL)
     @assertEqual(1.0_defReal, xss % fission, TOL)
     @assertEqual(2.3_defReal, xss % nuFission, TOL)
+    @assertEqual(202.0_defReal, xss % kappaXS, TOL)
 
     matClass => baseMgNeutronMaterial_CptrCast(database % getMaterial(1))
     @assertTrue(associated(matClass), "Type Ptr Cast has failed")
@@ -248,6 +259,7 @@ contains
     @assertEqual(4.0_defReal, xss % capture, TOL)
     @assertEqual(0.0_defReal, xss % fission, TOL)
     @assertEqual(0.0_defReal, xss % nuFission, TOL)
+    @assertEqual(0.0_defReal, xss % kappaXS, TOL)
 
     ! Get some invalid Materials
     mat => baseMgNeutronMaterial_TptrCast(database % getMaterial(0))

@@ -8,18 +8,19 @@ ASCII Dictionary Syntax
 
 SCONE uses a hierarchical input that is composed of nested dictionaries
 that contain some content associated with a keyword unique within the scope
-of a single dictionary. Following content is available:
+of a single dictionary. The following content is available:
 
 * Word with no spaces or ";" e.g. ThisIsContent
 * Integer number e.g. 1
 * Real number e.g. 2.78
 * List of Words, Integers or Reals
+* `TokenArray`, a possibly mixed list of words and numbers
 * Subdictionary
 
 Hierarchical structure of dictionaries can be loaded from ASCII files and be
-used inside the SCONE to construct different objects and set calculation
+used inside SCONE to construct different objects and set calculation
 settings. The syntax for writing dictionaries is based on
-`OpenFOAM <https://cfd.direct/openfoam/user-guide/basic-file-format/>`_. However only subset of
+`OpenFOAM <https://cfd.direct/openfoam/user-guide/basic-file-format/>`_. However only a subset of
 OpenFOAM syntax is supported. An example of the correct input dictionary is::
 
       // This is a line comment. C++ Style
@@ -35,6 +36,8 @@ OpenFOAM syntax is supported. An example of the correct input dictionary is::
       word Horace;
       words (Non omnis moriar);
 
+      tokens [I can count to 3.1415]; ! Read as an array of characters
+
       ! Subdictionary
       greeks{ poet Homer; politician Pericles; hero Theseus; }
       ! Note lack of semicolon at the end of subdictionary
@@ -47,7 +50,7 @@ At least one space is needed before an entry name and its value ::
     intArray ( 1 2 3) - OK
     intArray(1 2 3)   - WRONG
 
-Note that this is not a case for sub-dictionaries ::
+Note that this is not the case for sub-dictionaries ::
 
     sub{ entry1 1;}   - OK
     sub { entry1 1;}  - OK
@@ -81,6 +84,7 @@ of SCONE dictionary grammar in BNF notation is::
     <intList>     ::= (" "* <int> " "+)+
     <realList>    ::= (" "* (<int>|<real>)" "+)* (" "* <real>" "+)+ (" "* (<int>|<real>)" "+)*
     <wordList>    ::= (" "* <word> " "+)+
+    <tokenArray>  ::= [" "* <int>|<real>|word> " "+]+
 
 For compactness definitions of ``<int>``, ``<real>`` and ``<word>`` are omitted.
 They have the following meaning::
@@ -89,6 +93,6 @@ They have the following meaning::
     <real> ::= Real number e.g.: ^[-+]?[0-9]+[.][0-9]*([eE][-+]?[0-9]+)?$
     <word> ::= Must contain not digit character e.g.: .*[a-zA-Z]+.*
 
-This is not yet full definition of the grammar as it does not contain limitations related to
+This is not yet a full definition of the grammar as it does not contain limitations related to
 maximum size of integers, reals and maximum length of the characters. It may be useful if somebody
 will try to use a proper parser to read the SCONE dictionary files.

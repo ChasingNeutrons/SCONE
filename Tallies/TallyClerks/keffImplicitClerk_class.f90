@@ -3,7 +3,9 @@ module keffImplicitClerk_class
   use numPrecision
   use tallyCodes
   use endfConstants
-  use genericProcedures,          only : fatalError, charCmp
+  use universalVariables,         only : VOID_MAT, TRACKING_XS, MAX_COL
+  use genericProcedures,          only : fatalError, charCmp, numToChar
+  use display_func,               only : statusMsg
   use dictionary_class,           only : dictionary
   use particle_class,             only : particle
   use particleDungeon_class,      only : particleDungeon
@@ -25,7 +27,7 @@ module keffImplicitClerk_class
   private
 
 
-  !! Locations of diffrent bins wrt memory Address of the clerk
+  !! Locations of different bins wrt memory Address of the clerk
   integer(shortInt), parameter :: MEM_SIZE = 5
   integer(longInt), parameter  :: IMP_PROD     = 0 ,&  ! Implicit neutron production (from fission)
                                   SCATTER_PROD = 1 ,&  ! Analog Stattering production (N,XN)
@@ -33,12 +35,19 @@ module keffImplicitClerk_class
                                   ANA_LEAK     = 3 ,&  ! Analog Leakage
                                   K_EFF        = 4     ! k-eff estimate
 
+  !! Flags for total, prompt, and delayed fission
+  integer(shortInt), parameter :: TOTAL   = 1, & ! Total neutron production by fission
+                                  PROMPT  = 2, & ! Prompt neutron production by fission
+                                  DELAYED = 3    ! Delayed neutron production by fission
+
   !!
   !! A simple implicit k-eff estimator based on collison estimator of reaction rates,
-  !! and an analog estimators of (N,XN) reactions and leakage
+  !! and on analog estimators of (N,XN) reactions and leakage
+  !!
+  !! Allows computing prompt/delayed keff only.
   !!
   !! Private Members:
-  !!   targetSTD -> Target Standard Deviation for convergance check
+  !!   targetSTD -> Target Standard Deviation for convergence check
   !!
   !! Interface:
   !!   tallyClerk interface
@@ -49,12 +58,17 @@ module keffImplicitClerk_class
   !!   type keffImplicitClerk;
   !!   #trigger yes/no;
   !!   #SDtarget <value>;      ! Will be read only if trigger is present and "yes"
+  !!   #setting 1; #           ! Determines which neutron production to tally.
+  !!                           ! Numbers correspond to flags above. Default to 1.
   !!
   !! }
   !!
   type, public,extends(tallyClerk) :: keffImplicitClerk
     private
-    real(defReal) :: targetSTD = ZERO
+    real(defReal)     :: targetSTD = ZERO
+    ! Settings
+    logical(defBool)  :: handleVirtual = .true.
+    integer(shortInt) :: setting = TOTAL
   contains
     ! Duplicate interface of the tallyClerk
     ! Procedures used during build
@@ -67,7 +81,7 @@ module keffImplicitClerk_class
     procedure :: reportInColl
     procedure :: reportOutColl
     procedure :: reportHist
-    procedure :: reportCycleEnd
+    procedure :: closeCycle
     procedure :: isConverged
 
     ! Output procedures
@@ -75,6 +89,7 @@ module keffImplicitClerk_class
     procedure :: display
     procedure :: print
     procedure :: getResult
+
   end type keffImplicitClerk
 
 contains
@@ -89,19 +104,30 @@ contains
     class(dictionary), intent(in)           :: dict
     character(nameLen), intent(in)          :: name
     character(nameLen)                      :: chr
+    character(100), parameter  :: Here = 'init (keffImplicitClerk_class.f90)'
 
     ! Set name
     call self % setName(name)
 
-    ! Configure convergance trigger
+    ! Configure convergence trigger
     call dict % getOrDefault(chr,'trigger','no')
 
-    ! Read convergance target
+    ! Read convergence target
     if( charCmp(chr,'yes')) then
       call dict % get(self % targetSTD,'SDtarget')
 
     end if
 
+    ! Handle virtual collisions
+    call dict % getOrDefault(self % handleVirtual,'handleVirtual', .true.)
+
+    ! Which fission production to tally? Total, prompt, or delayed?
+    call dict % getOrDefault(self % setting,'setting', TOTAL)
+    if (self % setting < TOTAL .or. self % setting > DELAYED) then
+      call fatalError(Here,'"setting" options are 1, 2, 3 for total, prompt, and delayed. '//&
+              'Input setting is: '//numToChar(self % setting))
+    end if
+  
   end subroutine init
 
   !!
@@ -115,11 +141,13 @@ contains
 
     ! Kill self
     self % targetSTD = ZERO
+    self % handleVirtual = .true.
+    self % setting = TOTAL
 
   end subroutine kill
 
   !!
-  !! Returns array of codes that represent diffrent reports
+  !! Returns array of codes that represent different reports
   !!
   !! See tallyClerk_inter for details
   !!
@@ -127,7 +155,7 @@ contains
     class(keffImplicitClerk),intent(in)           :: self
     integer(shortInt),dimension(:),allocatable :: validCodes
 
-    validCodes = [inColl_CODE, outColl_CODE, cycleEnd_CODE, hist_CODE]
+    validCodes = [inColl_CODE, outColl_CODE, hist_CODE, closeCycle_CODE]
 
   end function validReports
 
@@ -157,24 +185,48 @@ contains
     logical(defBool), intent(in)             :: virtual
     type(neutronMacroXSs)                    :: xss
     class(neutronMaterial), pointer          :: mat
-    real(defReal)                            :: totalXS, nuFissXS, absXS, flux
+    real(defReal)                            :: nuFissXS, absXS, flux
     real(defReal)                            :: s1, s2
     character(100), parameter  :: Here = 'reportInColl (keffImplicitClerk_class.f90)'
 
-    ! This clerk does not handle virtual scoring yet
-    if (virtual) return
+    ! Return if collision is virtual but virtual collision handling is off
+    if ((.not. self % handleVirtual) .and. virtual) return
 
-    ! Obtain XSs
-    mat => neutronMaterial_CptrCast(xsData % getMaterial( p % matIdx()))
-    if(.not.associated(mat)) call fatalError(Here,'Unrecognised type of material was retrived from nuclearDatabase')
+    ! Ensure we're not in void (could happen when scoring virtual collisions)
+    if (p % matIdx() == VOID_MAT) return
+
+    ! Calculate flux with the right cross section according to virtual collision handling
+    if (self % handleVirtual) then
+      flux = p % w / xsData % getTrackingXS(p, p % matIdx(), TRACKING_XS)
+    else
+      flux = p % w / xsData % getTotalMatXS(p, p % matIdx())
+    end if
+
+    ! Get material pointer
+    mat => neutronMaterial_CptrCast(xsData % getMaterial(p % matIdx()))
+    if (.not.associated(mat)) then
+      call fatalError(Here,'Unrecognised type of material was retrived from nuclearDatabase')
+    end if
+
+    ! Obtain xss
     call mat % getMacroXSs(xss, p)
 
-    totalXS  = xss % total
-    nuFissXS = xss % nuFission
-    absXS    = xss % capture + xss % fission
+    select case(self % setting)
+      case(TOTAL)
+        nuFissXS = xss % nuFission
 
-    ! Calculate flux and scores
-    flux = p % w / totalXS
+      case(PROMPT)
+        nuFissXS = xss % promptNuFission
+
+      case(DELAYED)
+        nuFissXS = xss % nuFission - xss % promptNuFission
+
+      case default
+        nuFissXS = xss % nuFission
+
+    end select
+
+    absXS = xss % capture + xss % fission
 
     s1 = nuFissXS * flux
     s2 = absXS * flux
@@ -202,13 +254,13 @@ contains
     ! Select analog score
     ! Assumes N_XNs are by implicit weight change
     select case(MT)
-      case(N_2N)
+      case(N_2N, N_2Nd, N_2Na, N_2N2a, N_2Np, N_2Nl(1):N_2Ncont)
         score = 1.0_defReal * p % preCollision % wgt
-      case(N_3N)
+      case(N_3N, N_3Na, N_3Np)
         score = 2.0_defReal * p % preCollision % wgt
       case(N_4N)
         score = 3.0_defReal * p % preCollision % wgt
-      case(macroAllScatter) ! Catch weight change for MG scattering
+      case(macroAllScatter, macroIEScatter) ! Catch weight change for MG scattering
         score = max(p % w - p % preCollision % wgt, ZERO)
       case default
         score = ZERO
@@ -235,12 +287,12 @@ contains
     type(scoreMemory), intent(inout)        :: mem
     real(defReal)                           :: histWgt
 
-    if( p % fate == leak_FATE) then
+    if (p % fate == leak_FATE) then
       ! Obtain and score history weight
       histWgt = p % w
 
       ! Score analog leakage
-      call mem % score( histWgt, self % getMemAddress() + ANA_LEAK)
+      call mem % score(histWgt, self % getMemAddress() + ANA_LEAK)
 
     end if
 
@@ -251,28 +303,30 @@ contains
   !!
   !! See tallyClerk_inter for details
   !!
-  subroutine reportCycleEnd(self, end, mem)
+  subroutine closeCycle(self, end, mem)
     class(keffImplicitClerk), intent(inout) :: self
     class(particleDungeon), intent(in)      :: end
     type(scoreMemory), intent(inout)        :: mem
     integer(longInt)                        :: addr
     real(defReal)                           :: nuFiss, absorb, leakage, scatterMul, k_est
 
-    if( mem % lastCycle()) then
+    if (mem % lastCycle()) then
+
       addr = self % getMemAddress()
       nuFiss     = mem % getScore(addr + IMP_PROD)
       absorb     = mem % getScore(addr + IMP_ABS)
       leakage    = mem % getScore(addr + ANA_LEAK)
       scatterMul = mem % getScore(addr + SCATTER_PROD)
 
-      k_est = nuFiss / (absorb + leakage - scatterMul )
+      k_est = nuFiss / (absorb + leakage - scatterMul)
       call mem % accumulate(k_est, addr + K_EFF)
+
     end if
 
-  end subroutine reportCycleEnd
+  end subroutine closeCycle
 
   !!
-  !! Perform convergance check in the Clerk
+  !! Perform convergence check in the Clerk
   !!
   !! See tallyClerk_inter for details
   !!
@@ -289,7 +343,7 @@ contains
   end function isConverged
 
   !!
-  !! Display convergance progress on the console
+  !! Display convergence progress on the console
   !!
   !! See tallyClerk_inter for details
   !!
@@ -297,12 +351,14 @@ contains
     class(keffImplicitClerk), intent(in)  :: self
     type(scoreMemory), intent(in)         :: mem
     real(defReal)                         :: k, STD
+    character(MAX_COL)                    :: buffer
 
     ! Get current k-eff estimate
-    call mem % getResult(k, STD, self % getMemAddress() + K_EFF )
+    call mem % getResult(k, STD, self % getMemAddress() + K_EFF)
 
     ! Print to console
-    print '(A,F8.5,A,F8.5)', 'k-eff (implicit): ', k, ' +/- ', STD
+    write (buffer, '(A,F8.5,A,F8.5)') 'k-eff (implicit): ', k, ' +/- ', STD
+    call statusMsg(buffer)
 
   end subroutine display
 

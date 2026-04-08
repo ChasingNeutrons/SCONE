@@ -8,7 +8,7 @@ module trackClerk_test
   use scoreMemory_class,              only : scoreMemory
   use testNeutronDatabase_class,      only : testNeutronDatabase
   use outputFile_class,               only : outputFile
-  use pFUnit_mod
+  use funit
 
   implicit none
 
@@ -213,6 +213,7 @@ contains
     p % w = 1.3_defReal
     call clerk % reportPath(p, L, nucData, mem)
 
+    call mem % reduceBins()
     call mem % closeCycle(ONE)
 
     ! Verify results of scoring

@@ -20,9 +20,14 @@ module nuclearDatabase_inter
   !! So nuclear data objects for CE or MG neutron, photons or other particles are
   !! subclasses of this type.
   !!
+  !! Public Members:
+  !!   collisionXS -> XS determining the minimum average distance to collision (to be treated as virtual).
+  !!                  ZERO by default, i.e., flight distances can be infinite in void.
+  !!
   !! Interface:
-  !!   getTransMatXS -> returns transport Material XS given a particle
-  !!   getTotalMatXS -> returns total Material XS fiven a particle
+  !!   getTrackingXS -> returns XS used to sample track length
+  !!   getTrackMatXS -> returns material tracking xs, which could be different from the total (e.g., with TMS)
+  !!   getTotalMatXS -> returns total Material XS given a particle
   !!   getMajorantXS -> returns majorant XS given particle and list of active materials
   !!   matNamesMap   -> returns pointer to map of material names to matIdx
   !!   getMaterial   -> returns a pointer to a material handle for given matIdx
@@ -31,10 +36,13 @@ module nuclearDatabase_inter
   !!   kill          -> return to uninitialised state, clean memory
   !!
   type, public,abstract :: nuclearDatabase
+    real(defReal)                      :: collisionXS = ZERO
   contains
     procedure(init), deferred          :: init
     procedure(activate), deferred      :: activate
-    procedure(getTransMatXS), deferred :: getTransMatXS
+    procedure(initMajorant), deferred  :: initMajorant
+    procedure(getTrackingXS), deferred :: getTrackingXS
+    procedure(getTrackMatXS), deferred :: getTrackMatXS
     procedure(getTotalMatXS), deferred :: getTotalMatXS
     procedure(getMajorantXS), deferred :: getMajorantXS
     procedure(matNamesMap), deferred   :: matNamesMap
@@ -71,43 +79,102 @@ module nuclearDatabase_inter
     !!
     !! Args:
     !!   activeMat [in] -> Array of matIdx of materials active in the simulation
+    !!   silent [in]    -> Optional. If set to .true. disables console output
     !!
     !! Errors:
     !!   fatalError if activeMat contains materials not defined in the instance
     !!
-    subroutine activate(self, activeMat)
-      import :: nuclearDatabase, shortInt
+    subroutine activate(self, activeMat, silent)
+      import :: nuclearDatabase, shortInt, defBool
       class(nuclearDatabase), intent(inout)       :: self
       integer(shortInt), dimension(:), intent(in) :: activeMat
+      logical(defBool), optional, intent(in)      :: silent
     end subroutine activate
 
     !!
-    !! Return value of Material Transport XS for a particle
+    !! Constructs the majorant cross section.
+    !! Can be called repeatedly to update the majorant subject
+    !! to changes in the geometry.
     !!
-    !! Reads all relevalnt state information from the particle (e.g. E or G)
-    !! Usually is the same as material total XS, but it may be not always the case
+    !! Optionally can be 'loud', i.e., outputs information on initialising
+    !! the majorant.
+    !!
+    !! Optionally can account for the temperature due to super-imposed
+    !! temperature fields. This should receive the maximum temperature in
+    !! the system. This is conservative and can be improved by creating a
+    !! material-wise maximum temperature input.
+    !!
+    !! Optionally can scale the density. scaleDensity should be
+    !! the relative (to input) density of the highest density material.
+    !! This is most naturally used with a super-imposed density field.
+    !! As for temperature, this approach for density is conservative and 
+    !! could be improved with a material-wise density scaling factor.
+    !!
+    subroutine initMajorant(self, loud, maxTemp, scaleDensity)
+      import :: nuclearDatabase, defBool, defReal
+      class(nuclearDatabase), intent(inout)  :: self
+      logical(defBool), optional, intent(in) :: loud
+      real(defReal), optional, intent(in)    :: maxTemp
+      real(defReal), optional, intent(in)    :: scaleDensity
+    end subroutine initMajorant
+
+    !!
+    !! Return value of tracking XS for a particle and a given request
+    !!
+    !! Reads all relevant state information from the particle (e.g. E or G)
+    !! It is the XS used to sample track length: it might be the same as the
+    !! material total XS, the majorant XS, or a temperature majorant.
     !!
     !! Args:
-    !!   p [in]      -> particle at a given state
+    !!   p [in]      -> Particle at a given state
+    !!   matIdx [in] -> Material index
+    !!   what [in]   -> Request index
+    !!
+    !! Result:
+    !!   Value of XS used to sample path length [1/cm]
+    !!
+    !! Errors:
+    !!   Undefined behaviour if the state of the particle is invalid e.g. -ve energy.
+    !!   Undefined behavior if matIdx does not correspond to a defined material.
+    !!   Fatal error if incorrect 'what' option is provided.
+    !!
+    function getTrackingXS(self, p, matIdx, what) result(xs)
+      import :: nuclearDatabase, particle, shortInt, defReal
+      class(nuclearDatabase), intent(inout) :: self
+      class(particle), intent(in)           :: p
+      integer(shortInt), intent(in)         :: matIdx
+      integer(shortInt), intent(in)         :: what
+      real(defReal)                         :: xs
+    end function getTrackingXS
+
+    !!
+    !! Return value of materials tracking XS for a particle
+    !!
+    !! Reads all relevant state information from the particle (e.g. E or G)
+    !! It is the XS used to sample track length in a material: it might be the same
+    !! as the material total XS, or a material temperature majorant when TMS is used
+    !!
+    !! Args:
+    !!   p [in]      -> Particle at a given state
     !!   matIdx [in] -> Material index
     !!
     !! Result:
-    !!   Value of a material transport XS [1/cm]
+    !!   Value of material tracking XS [1/cm]
     !!
     !! Errors:
     !!   Undefined behaviour if the state of the particle is invalid e.g. -ve energy
     !!   Undefined behavior if matIdx does not correspond to a defined material
     !!
-    function getTransMatXS(self, p, matIdx) result(xs)
+    function getTrackMatXS(self, p, matIdx) result(xs)
       import :: nuclearDatabase, particle, shortInt, defReal
       class(nuclearDatabase), intent(inout) :: self
       class(particle), intent(in)           :: p
       integer(shortInt), intent(in)         :: matIdx
       real(defReal)                         :: xs
-    end function getTransMatXS
+    end function getTrackMatXS
 
     !!
-    !! Return value of Material Total XS for a particle
+    !! Return value of material total XS for a particle
     !!
     !! Reads all relevalnt state information from the particle (e.g. E or G)
     !!
@@ -131,7 +198,7 @@ module nuclearDatabase_inter
     end function getTotalMatXS
 
     !!
-    !! Return value of Majorant XS for a particle
+    !! Return value of majorant XS for a particle
     !!
     !! Reads all relevalnt state information from the particle (e.g. E or G)
     !! Majorant XS is the largest of TRANSPORT XSs for ACTIVE materials
@@ -170,7 +237,7 @@ module nuclearDatabase_inter
     !!
     !! Return pointer to material in a database
     !!
-    !! Allows to retrive an access to material data for all databases types
+    !! Allows to retrieve an access to material data for all databases types
     !!
     !! NOTE: This function can be used to inquire about the presence of matIdx in the database!
     !!
@@ -193,10 +260,10 @@ module nuclearDatabase_inter
     !!
     !! Return pointer to nuclide in a database
     !!
-    !! Allows to retrive an access to nuclide data for all databases types
+    !! Allows to retrieve an access to nuclide data for all databases types
     !! If database does not contain nuclides (e.g. MG data) just returns null() pointer
     !!
-    !! NOTE: This function can be used to inquire abou the presence of nucIdx in the database!
+    !! NOTE: This function can be used to inquire about the presence of nucIdx in the database!
     !!
     !! Args:
     !!   nucIdx [in] -> nuclide index of required material
@@ -217,15 +284,15 @@ module nuclearDatabase_inter
     !!
     !! Return a pointer to a reaction
     !!
-    !! Allows to retrive an access to reaction data for all databases types
+    !! Allows to retrieve an access to reaction data for all databases types
     !! Reactions can be associated either with nuclides or materials. Thus, there is ambiguity
-    !! whether material or nuclide should be asked to provide reaction data (using matIdx or nuIdx)
+    !! whether material or nuclide should be asked to provide reaction data (using matIdx or nucIdx)
     !!
     !! This ambiguity is resolved by following convenction:
     !!   if MT < 0 then reaction is associated with material: idx -> matIdx
     !!   if MT > 0 then reaction is associated with nuclide: idx -> nucIdx
     !!
-    !! NOTE: This function can be used to enquire abou the presence of data. If the data is
+    !! NOTE: This function can be used to enquire about the presence of data. If the data is
     !!       not present null() pointer is always returned!
     !!
     !! Args:

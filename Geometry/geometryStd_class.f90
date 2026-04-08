@@ -10,6 +10,12 @@ module geometryStd_class
   use csg_class,          only : csg
   use universe_inter,     only : universe
   use surface_inter,      only : surface
+  
+  use field_inter,              only : field
+  use pieceConstantField_inter, only : pieceConstantField, pieceConstantField_CptrCast
+  
+  use geometryReg_mod,          only : gr_hasField => hasField, &
+                                       gr_fieldPtrName => fieldPtrName
 
   ! Nuclear Data
   use materialMenu_mod,   only : nMat
@@ -24,10 +30,17 @@ module geometryStd_class
   public :: geometryStd_CptrCast
 
   !!
+  !! Private distance to the nearest pieceConstant field crossing
+  !!
+  private :: getFieldDist
+
+  !!
   !! Standard Geometry Model
   !!
   !! Typical geometry of a MC Neutron Transport code composed of multiple nested
   !! universes.
+  !!
+  !! Supports super-imposed temperature and density fields.
   !!
   !! Boundary conditions in diffrent movement models are handeled:
   !!   move       -> explicitBC
@@ -37,7 +50,7 @@ module geometryStd_class
   !! Sample Dictionary Input:
   !!   geometry {
   !!     type geometryStd;
-  !!     <csg_class difinition>
+  !!     <csg_class definition>
   !!    }
   !!
   !! Public Members:
@@ -60,6 +73,7 @@ module geometryStd_class
     procedure :: move_noCache
     procedure :: move_withCache
     procedure :: moveGlobal
+    procedure :: moveNoBC
     procedure :: teleport
     procedure :: activeMats
 
@@ -198,28 +212,38 @@ contains
   !! Uses explicit BC
   !!
   subroutine move_noCache(self, coords, maxDist, event)
-    class(geometryStd), intent(in) :: self
-    type(coordList), intent(inout) :: coords
-    real(defReal), intent(inout)   :: maxDist
-    integer(shortInt), intent(out) :: event
-    integer(shortInt)              :: surfIdx, level
-    real(defReal)                  :: dist
-    class(surface), pointer        :: surf
-    class(universe), pointer       :: uni
-    character(100), parameter :: Here = 'move (geometryStd_class.f90)'
+    class(geometryStd), intent(in)     :: self
+    type(coordList), intent(inout)     :: coords
+    real(defReal), intent(inout)       :: maxDist
+    integer(shortInt), intent(out)     :: event
+    integer(shortInt)                  :: surfIdx, level, level0
+    real(defReal)                      :: dist, fieldDist
+    class(surface), pointer            :: surf
+    class(universe), pointer           :: uni
+    character(100), parameter :: Here = 'move_noCache (geometryStd_class.f90)'
 
     if (.not.coords % isPlaced()) then
       call fatalError(Here, 'Coordinate list is not placed in the geometry')
     end if
 
+    level0 = coords % nesting
+    
     ! Find distance to the next surface
     call self % closestDist(dist, surfIdx, level, coords)
+    
+    ! Check fields
+    fieldDist = getFieldDist(coords)
 
-    if (maxDist < dist) then ! Moves within cell
+    if (maxDist < dist .and. maxDist < fieldDist) then ! Moves within cell
       call coords % moveLocal(maxDist, coords % nesting)
       event = COLL_EV
       maxDist = maxDist ! Left for explicitness. Compiler will not stand it anyway
-
+    
+    else if (maxDist < dist .and. maxDist >= fieldDist) then ! Stays within the same cell, but crosses field boundary
+      call coords % moveLocal(fieldDist, level0)
+      event = FIELD_EV
+      maxDist = fieldDist
+    
     else if (surfIdx == self % geom % borderIdx .and. level == 1) then ! Hits domain boundary
       ! Move global to the boundary
       call coords % moveGlobal(dist)
@@ -232,8 +256,8 @@ contains
 
       ! Place back in geometry
       call self % placeCoord(coords)
-
-    else ! Crosses to diffrent local cell
+    
+    else ! Crosses to different local cell
       ! Move to boundary at hit level
       call coords % moveLocal(dist, level)
       event = CROSS_EV
@@ -248,6 +272,7 @@ contains
 
     end if
 
+
   end subroutine move_noCache
 
   !!
@@ -258,29 +283,40 @@ contains
   !! Uses explicit BC
   !!
   subroutine move_withCache(self, coords, maxDist, event, cache)
-    class(geometryStd), intent(in) :: self
-    type(coordList), intent(inout) :: coords
-    real(defReal), intent(inout)   :: maxDist
-    integer(shortInt), intent(out) :: event
-    type(distCache), intent(inout) :: cache
-    integer(shortInt)              :: surfIdx, level
-    real(defReal)                  :: dist
-    class(surface), pointer        :: surf
-    class(universe), pointer       :: uni
+    class(geometryStd), intent(in)     :: self
+    type(coordList), intent(inout)     :: coords
+    real(defReal), intent(inout)       :: maxDist
+    integer(shortInt), intent(out)     :: event
+    type(distCache), intent(inout)     :: cache
+    integer(shortInt)                  :: surfIdx, level, level0
+    real(defReal)                      :: dist, fieldDist
+    class(surface), pointer            :: surf
+    class(universe), pointer           :: uni
     character(100), parameter :: Here = 'move_withCache (geometryStd_class.f90)'
 
     if (.not.coords % isPlaced()) then
       call fatalError(Here, 'Coordinate list is not placed in the geometry')
     end if
 
+    level0 = coords % nesting
+    
     ! Find distance to the next surface
     call self % closestDist_cache(dist, surfIdx, level, coords, cache)
+    
+    ! Check fields
+    fieldDist = getFieldDist(coords)
 
-    if (maxDist < dist) then ! Moves within cell
+    if (maxDist < dist .and. maxDist < fieldDist) then ! Moves within cell
       call coords % moveLocal(maxDist, coords % nesting)
       event = COLL_EV
       maxDist = maxDist ! Left for explicitness. Compiler will not stand it anyway
       cache % lvl = 0
+
+    else if (maxDist < dist .and. maxDist >= fieldDist) then ! Stays within the same cell, but crosses field boundary
+      call coords % moveLocal(fieldDist, level0)
+      event = FIELD_EV
+      maxDist = fieldDist
+      cache % dist(1:level0) = cache % dist(1:level0) - fieldDist
 
     else if (surfIdx == self % geom % borderIdx .and. level == 1) then ! Hits domain boundary
       ! Move global to the boundary
@@ -295,8 +331,8 @@ contains
 
       ! Place back in geometry
       call self % placeCoord(coords)
-
-    else ! Crosses to diffrent local cell
+    
+    else ! Crosses to different local cell
       ! Move to boundary at hit level
       call coords % moveLocal(dist, level)
       event = CROSS_EV
@@ -356,6 +392,95 @@ contains
     call self % placeCoord(coords)
 
   end subroutine moveGlobal
+  
+  !!
+  !! Given coordinates placed in the geometry move point through the geometry.
+  !! Does not apply boundary conditions. Also provides normal of struck surfaces.
+  !! Used for ray plotting.
+  !!
+  !! See geometry_inter for details
+  !!
+  subroutine moveNoBC(self, coords, maxDist, event, n)
+    class(geometryStd), intent(in)           :: self
+    type(coordList), intent(inout)           :: coords
+    real(defReal), intent(inout)             :: maxDist
+    integer(shortInt), intent(out)           :: event
+    real(defReal), dimension(3), intent(out) :: n
+    integer(shortInt)                        :: surfIdx, level
+    real(defReal)                            :: dist
+    class(surface), pointer                  :: surf
+    class(universe), pointer                 :: uni
+    type(coordList)                          :: coordsTemp
+    character(100), parameter :: Here = 'moveNoBC (geometryStd_class.f90)'
+
+    n = ZERO
+
+    ! Find distance to the next surface
+    call self % closestDist(dist, surfIdx, level, coords)
+
+    ! Moves within cell
+    ! Note: no normal should be produced since there is no
+    !       collision with a surface
+    if (maxDist <= dist) then
+      
+      if (level > 1) then
+        call coords % moveLocal(maxDist, level)
+      
+      ! Catch in case moving through the outside region
+      else
+        call coords % moveGlobal(maxDist)
+        
+        ! Place back in geometry
+        call self % placeCoord(coords)
+      end if
+      maxDist = maxDist ! Left for explicitness. Compiler will not stand it anyway
+      event = COLL_EV
+
+    else if (surfIdx == self % geom % borderIdx) then ! Hits domain boundary
+      ! Move global to the boundary
+      call coords % moveGlobal(dist)
+      event = BOUNDARY_EV
+      maxDist = dist
+
+      ! Place back in geometry
+      call self % placeCoord(coords)
+
+      ! Produce normal at domain boundary
+      surf => self % geom % surfs % getPtr(self % geom % borderIdx)
+      n = surf % normal(coords % lvl(1) % r, coords % lvl(1) % dir)
+    
+    else ! Crosses to different local cell
+      ! Move to boundary at hit level
+      call coords % moveLocal(dist, level)
+      event = CROSS_EV
+      maxDist = dist
+
+      ! Get universe and cross to the next cell
+      uni => self % geom % unis % getPtr_fast(coords % lvl(level) % uniIdx)
+      call uni % cross(coords % lvl(level), surfIdx)
+
+      ! Obtain surface normal in the local reference frame
+      ! If surfIdx is positive, this is an actual surface
+      if (surfIdx > 0) then
+        surf => self % geom % surfs % getPtr(surfIdx)
+        n = surf % normal(coords % lvl(level) % r, coords % lvl(level) % dir)
+      
+      ! If negative, this is an implied surface from a structured universe, e.g., lattice
+      else
+        n = uni % getNormal(surfIdx, coords % lvl(level))
+      end if
+      
+      ! Rotate normal to the top universe reference frame
+      coordsTemp = coords
+      call coordsTemp % assignDirectionLevel(n, level)
+      n = coordsTemp % lvl(1) % dir
+      
+      ! Get material
+      call self % diveToMat(coords, level)
+
+    end if
+
+  end subroutine moveNoBC
 
   !!
   !! Move a particle in the top level without stopping
@@ -409,8 +534,13 @@ contains
       N = N - 1
       lastIdx = self % geom % graph % usedMats(N)
     end if
-    ! Check if the last entry of the list is an undefined material
+    ! Check if the last entry of the list is an actual material or an undefined material
     if (lastIdx == UNDEF_MAT) then
+      N = N - 1
+      lastIdx = self % geom % graph % usedMats(N)
+    end if
+    ! Check if the last entry of the list is an actual material or an overlap material
+    if (lastIdx == OVERLAP_MAT) then
       matList = self % geom % graph % usedMats(1:N-1)
     else
       matList = self % geom % graph % usedMats(1:N)
@@ -419,18 +549,18 @@ contains
   end function activeMats
 
   !!
-  !! Descend down the geometry structure untill material is reached
+  !! Descend down the geometry structure until material is reached
   !!
-  !! Requires strting level to be specified.
-  !! It is private procedure common to all movment types in geometry.
+  !! Requires starting level to be specified.
+  !! It is a private procedure common to all movement types in geometry.
   !!
   !! Args:
-  !!   coords [inout] -> CoordList of a particle. Assume thet coords are already valid for all
+  !!   coords [inout] -> CoordList of a particle. Assume that coords are already valid for all
   !!     levels above and including start
-  !!   start [in] -> Starting level for meterial search
+  !!   start [in] -> Starting level for material search
   !!
   !! Errors:
-  !!   fatalError if material cell is not found untill maximum nesting is reached
+  !!   fatalError if material cell is not found until maximum nesting is reached
   !!
   subroutine diveToMat(self, coords, start)
     class(geometryStd), intent(in) :: self
@@ -438,13 +568,14 @@ contains
     integer(shortInt), intent(in)  :: start
     integer(shortInt)              :: rootID, localID, fill, id, i
     class(universe), pointer       :: uni
-    real(defReal), dimension(3)    :: offset
+    real(defReal), dimension(3)    :: offset, r
     character(100), parameter :: Here = 'diveToMat (geometryStd_class.f90)'
 
     do i = start, HARDCODED_MAX_NEST
       ! Find cell fill
       rootId = coords % lvl(i) % uniRootID
       localID = coords % lvl(i) % localID
+      
       call self % geom % graph % getFill(fill, id, rootID, localID)
 
       if (fill >= 0) then ! Found material cell
@@ -462,13 +593,21 @@ contains
 
         ! Get cell offset
         offset = uni % cellOffset(coords % lvl(i))
-
+        
         ! Get nested universe
         uni => self % geom % unis % getPtr_fast(fill)
+        
+        ! Does this level revert to the global frame?
+        ! Unrotate direction as well?
+        if (uni % transformToGlobal()) then
+          r = coords % lvl(1) % r
+        else
+          r = coords % lvl(i) % r - offset
+        end if
 
-        ! Enter nested univers
+        ! Enter nested universe
         call coords % addLevel()
-        call uni % enter(coords % lvl(i+1), coords % lvl(i) % r - offset, coords % lvl(i) % dir)
+        call uni % enter(coords % lvl(i+1), r, coords % lvl(i) % dir)
         coords % lvl(i+1) % uniRootID = id ! Must be after enter where coord has intent out
 
       end if
@@ -600,5 +739,33 @@ contains
     end select
 
   end function geometryStd_CptrCast
+  
+  !!
+  !! Helper function.
+  !! Get the distance to the nearest pieceConstantField boundary
+  !!
+  !! Returns INF if neither density nor temperature fields exist
+  !!
+  function getFieldDist(coords) result(dist)
+    type(coordList), intent(in)        :: coords
+    real(defReal)                      :: dist
+    class(field), pointer              :: genericField
+    class(pieceConstantField), pointer :: pcField
+    
+    dist = INF
+    if (gr_hasField(nameTemperature)) then
+      genericField => gr_fieldPtrName(nameTemperature)
+      pcField => pieceConstantField_CptrCast(genericField)
+      dist = min(dist, pcField % distance(coords))
+    end if
+
+    if (gr_hasField(nameDensity)) then
+      genericField => gr_fieldPtrName(nameDensity)
+      pcField => pieceConstantField_CptrCast(genericField)
+      dist = min(dist, pcField % distance(coords))
+    end if
+
+  end function getFieldDist
+
 
 end module geometryStd_class

@@ -44,7 +44,9 @@ module testNeutronDatabase_class
     ! Superclass Interface
     procedure :: init
     procedure :: activate
-    procedure :: getTransMatXS
+    procedure :: initMajorant
+    procedure :: getTrackingXS
+    procedure :: getTrackMatXS
     procedure :: getTotalMatXS
     procedure :: getMajorantXS
     procedure :: matNamesMap
@@ -69,11 +71,12 @@ contains
   !!   captureXS [in]   -> Optional. Value of Capture XS
   !!   fissionXS [in]   -> Optional. Value of Fission XS
   !!   nuFissionXS [in] -> Optional Value of nuFission
+  !!   kappaXS [in]     -> Optional Value of kappa XS
   !!
   !! Errors:
   !!   None
   !!
-  subroutine build(self, xsVal, eScatterXS, ieScatterXS ,captureXS, fissionXS, nuFissionXS)
+  subroutine build(self, xsVal, eScatterXS, ieScatterXS ,captureXS, fissionXS, nuFissionXS, kappaXS)
     class(testNeutroNDatabase), intent(inout) :: self
     real(defReal), intent(in)                 :: xsVal
     real(defReal), intent(in),optional        :: eScatterXS
@@ -81,6 +84,7 @@ contains
     real(defReal), intent(in),optional        :: captureXS
     real(defReal), intent(in),optional        :: fissionXS
     real(defReal), intent(in),optional        :: nuFissionXS
+    real(defReal), intent(in),optional        :: kappaXS
 
     self % xsVal = xsVal
 
@@ -124,6 +128,13 @@ contains
     else
       self % mat % xss % nuFission = xsVal
     end if
+    
+    ! kappa * fission
+    if(present(kappaXS)) then
+      self % mat % xss % kappaXS = kappaXS
+    else
+      self % mat % xss % kappaXS = xsVal
+    end if
 
   end subroutine build
 
@@ -153,20 +164,50 @@ contains
   !!
   !! See nuclearDatabase_inter for details
   !!
-  subroutine activate(self, activeMat)
+  subroutine activate(self, activeMat, silent)
     class(testNeutronDatabase), intent(inout)   :: self
     integer(shortInt), dimension(:), intent(in) :: activeMat
+    logical(defBool), optional, intent(in)      :: silent
 
     ! Do nothing
 
   end subroutine activate
+  
+  !!
+  !!
+  !!
+  subroutine initMajorant(self, loud, maxTemp, scaleDensity)
+    class(testNeutronDatabase), intent(inout) :: self
+    logical(defBool), intent(in), optional    :: loud
+    real(defReal), intent(in), optional       :: maxTemp
+    real(defReal), intent(in), optional       :: scaleDensity
+
+    ! Do nothing
+
+  end subroutine initMajorant
 
   !!
-  !! Return value of Material Transport XS for a particle
+  !! Return value of Tracking XS for a particle and a given request
   !!
   !! See nuclearDatabase_inter for details
   !!
-  function getTransMatXS(self, p, matIdx) result(xs)
+  function getTrackingXS(self, p, matIdx, what) result(xs)
+    class(testNeutronDatabase), intent(inout) :: self
+    class(particle), intent(in)               :: p
+    integer(shortInt), intent(in)             :: matIdx
+    integer(shortInt), intent(in)             :: what
+    real(defReal)                             :: xs
+
+    xs = self % xsVal
+
+  end function getTrackingXS
+
+  !!
+  !! Return value of material tracking XS for a particle
+  !!
+  !! See nuclearDatabase_inter for details
+  !!
+  function getTrackMatXS(self, p, matIdx) result(xs)
     class(testNeutronDatabase), intent(inout) :: self
     class(particle), intent(in)               :: p
     integer(shortInt), intent(in)             :: matIdx
@@ -174,10 +215,10 @@ contains
 
     xs = self % xsVal
 
-  end function getTransMatXS
+  end function getTrackMatXS
 
   !!
-  !! Return value of Material Total XS for a particle
+  !! Return value of material total XS for a particle
   !!
   !! See nuclearDatabase_inter for details
   !!

@@ -32,7 +32,7 @@ module source_inter
   !!   sampleParticle    -> sample particles from the corresponding distributions
   !!   kill              -> clean up the source
   !!
-  type, public,abstract :: source
+  type, public, abstract :: source
     private
     class(geometry), pointer, public       :: geom => null()
   contains
@@ -108,17 +108,13 @@ contains
       call dungeon % setSize(n)
 
       ! Generate n particles to populate dungeon
-      ! TODO: advance the rand after source generation!
-      !       This should prevent reusing RNs during transport
-      !$omp parallel
-      pRand = rand
-      !$omp do
+      !$omp parallel do
       do i = 1, n
+        pRand = rand
         call pRand % stride(i)
         call dungeon % replace(self % sampleParticle(pRand), i)
       end do
-      !$omp end do
-      !$omp end parallel
+      !$omp end parallel do
 
     end subroutine generate
 

@@ -11,7 +11,7 @@ module keffImplicitClerk_test
   use dictionary_class,        only : dictionary
   use scoreMemory_class,       only : scoreMemory
   use outputFile_class,        only : outputFile
-  use pFUnit_mod
+  use funit
 
   use testNeutronDatabase_class, only : testNeutronDatabase
 
@@ -76,10 +76,6 @@ contains
     call this % clerk % setMemAddress(1_longInt)
     call pit % init(4)
 
-
-    ! Configure particle
-    p % fate = leak_FATE
-
     !*** Start cycle 1
     ! Score implicit reaction rates
     p % w = 0.7_defReal
@@ -91,11 +87,13 @@ contains
 
     ! Score leakage
     p % w = 0.3_defReal
+    p % fate = leak_FATE
     call this % clerk % reportHist(p, this % nucData, mem)
 
     ! End cycle
+    call mem % reduceBins()
     call pit % detain(p)
-    call this % clerk % reportCycleEnd(pit, mem)
+    call this % clerk % closeCycle(pit, mem)
     call pit % release(p)
     call mem % closeCycle(ONE)
 
@@ -110,11 +108,13 @@ contains
 
     ! Score leakage
     p % w = 0.3_defReal
+    p % fate = leak_FATE
     call this % clerk % reportHist(p, this % nucData, mem)
 
     ! End cycle
+    call mem % reduceBins()
     call pit % detain(p)
-    call this % clerk % reportCycleEnd(pit, mem)
+    call this % clerk % closeCycle(pit, mem)
     call pit % release(p)
     call mem % closeCycle(ONE)
 
@@ -129,6 +129,7 @@ contains
         @assertTrue(.false.,'Result is not a keffResult')
 
     end select
+
   end subroutine test1CycleBatch
 
   !!

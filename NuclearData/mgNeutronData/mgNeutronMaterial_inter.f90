@@ -10,6 +10,9 @@ module mgNeutronMaterial_inter
   use neutronMaterial_inter,   only : neutronMaterial
   use neutronXsPackages_class, only : neutronMacroXSs
 
+  ! MG NEUTRON CACHE
+  use mgNeutronCache_mod,      only : cache_materialCache => materialCache
+
   implicit none
   private
 
@@ -44,6 +47,7 @@ module mgNeutronMaterial_inter
     procedure :: kill
     generic   :: getMacroXSs => getMacroXSs_byG
     procedure :: getMacroXSs_byP
+    procedure :: getMTxs
 
     ! Local procedures
     procedure(getMacroXSs_byG), deferred    :: getMacroXSs_byG
@@ -108,16 +112,51 @@ contains
     class(mgNeutronMaterial), intent(in) :: self
     type(neutronMacroXSs), intent(out)   :: xss
     class(particle), intent(in)          :: p
-    character(100), parameter :: Here = 'getMacroXSs_byP (mgNeutronMateerial_inter.f90)'
+    integer(shortInt)                    :: matIdx
+    character(100), parameter :: Here = 'getMacroXSs_byP (mgNeutronMaterial_inter.f90)'
 
-    if( p % isMG) then
-      call self % getMacroXSs(xss, p % G, p % pRNG)
+    if (.not. p % isMG) call fatalError(Here, 'CE particle was given to MG data')
 
-    else
-      call fatalError(Here, 'CE particle was given to MG data')
+    ! Store p % matIdx() in a dedicated variable to avoid compilation errors with gfortran >= 13.2
+    matIdx = p % matIdx()
 
-    end if
+    associate (matCache => cache_materialCache(matIdx))
+
+      if (matCache % G_tail /= p % G) then
+        ! Get cross sections
+        call self % getMacroXSs(xss, p % G, p % pRNG)
+        ! Update cache
+        matCache % xss = xss
+        matCache % G_tail = p % G
+
+      else
+        ! Retrieve cross sections from cache
+        xss = matCache % xss
+
+      end if
+
+    end associate
+
   end subroutine getMacroXSs_byP
+
+  !!
+  !! NOTE: this function is here to satisfy the interface.
+  !!       However, it doesn't make sense in MG
+  !!
+  function getMTxs(self, MT, p) result(xs)
+    class(mgNeutronMaterial), intent(in) :: self
+    integer(shortInt), intent(in)        :: MT
+    class(particle), intent(in)          :: p
+    real(defReal)                        :: xs
+    character(100), parameter :: Here = 'getMTxs_byP (mgNeutronMaterial_inter.f90)'
+
+    ! Avoid warnings
+    xs = ZERO
+
+    ! This should never happen
+    call fatalError(Here, 'This function should never be called!')
+
+  end function getMTxs
 
   !!
   !! Return .true. if the MG material is fissile

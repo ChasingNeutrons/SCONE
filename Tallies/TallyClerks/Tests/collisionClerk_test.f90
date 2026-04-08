@@ -8,7 +8,8 @@ module collisionClerk_test
   use scoreMemory_class,              only : scoreMemory
   use testNeutronDatabase_class,      only : testNeutronDatabase
   use outputFile_class,               only : outputFile
-  use pFUnit_mod
+  use ceNeutronCache_mod,             only: cache_init => init, trackingCache
+  use funit
 
   implicit none
 
@@ -177,8 +178,9 @@ contains
     call res2Dict % store('value', 1.3_defReal)
 
     ! Configure dictionary for the clerk
-    call clerkDict % init(6)
+    call clerkDict % init(7)
     call clerkDict % store('type','collisionClerk')
+    call clerkDict % store('handleVirtual', 0)
     call clerkDict % store(res1Name, res1Dict)
     call clerkDict % store(res2Name, res2Dict)
 
@@ -217,6 +219,7 @@ contains
     p % w = 1000.3_defReal
     call clerk % reportInColl(p, nucData, mem, .true.)
 
+    call mem % reduceBins()
     call mem % closeCycle(ONE)
 
     ! Verify results of scoring
@@ -296,7 +299,6 @@ contains
     ! Configure dictionary for the clerk
     call clerkDict % init(6)
     call clerkDict % store('type','collisionClerk')
-    call clerkDict % store('handleVirtual', 1)
     call clerkDict % store(res1Name, res1Dict)
     call clerkDict % store(res2Name, res2Dict)
 
@@ -321,16 +323,23 @@ contains
 
     ! Build nuclear data
     call nucData % build(0.3_defReal)
+    ! Build cache
+    call cache_init(1, 1, 1)
+    trackingCache % xs = 0.3_defReal
+    trackingCache % E  = 10.0_defReal
 
     ! Perform scoring, both virtual and physical should contribute
     call p % setMatIdx(1)
     p % w = 0.7_defReal
+    p % E = 10.0_defReal
+    p % isMG = .false.
     call clerk % reportInColl(p, nucData, mem, .true.)
 
     call p % setMatIdx(6)
     p % w = 1.3_defReal
     call clerk % reportInColl(p, nucData, mem, .false.)
 
+    call mem % reduceBins()
     call mem % closeCycle(ONE)
 
     ! Verify results of scoring

@@ -4,6 +4,13 @@
 cmake_minimum_required(VERSION 3.10)
 project(SCONE)
 
+# Set CMAKE Policies
+#   CMP0074: Starting with CMake 3.12, all `find_package` commands will use `<package>_ROOT`
+#            variables as hints for where to search. This policy provides compatibility
+#            with older projects.
+#            https://cmake.org/cmake/help/latest/policy/CMP0074.html
+cmake_policy(SET CMP0074 NEW)
+
 ####################################################################################################
 # DEFINE COMPILATION OPTIONS
 
@@ -12,6 +19,8 @@ option(LTO         "Enables link-time optimisation"     ON)
 option(COVERAGE    "Collect Coverage Info"              OFF)
 option(DEBUG       "Enable extra run-time checks"       OFF)
 option(OPENMP      "Enable parallelism with OpenMP"     ON)
+option(MPI         "Enable parallelism with MPI"        ON)
+
 
 # Include local cmake modules. TODO: Test on WINDOWS!!!
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake")
@@ -25,7 +34,7 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake")
 
 enable_language(Fortran)
 set(CMAKE_Fortran_MODULE_DIRECTORY ${PROJECT_BINARY_DIR}/modFiles)
-
+file(MAKE_DIRECTORY ${CMAKE_Fortran_MODULE_DIRECTORY})
 # Add compilers flags
 # The flags set below will be applied to all Fortran files
 #
@@ -70,6 +79,12 @@ if(OPENMP)
   set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${OpenMP_Fortran_FLAGS}")
 endif()
 
+# Set up MPI
+if(MPI)
+  find_package(MPI COMPONENTS Fortran REQUIRED)
+  set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -DMPI")
+endif()
+
 
 ####################################################################################################
 # CHECK FOR DEPENDENCIES
@@ -77,7 +92,7 @@ endif()
 # Add environmental variable to default search directories
 list(APPEND CMAKE_PREFIX_PATH $ENV{LAPACK_INSTALL})
 
-find_package(LAPACK REQUIRED )
+find_package(LAPACK REQUIRED)
 message(STATUS ${LAPACK_LIBRARIES})
 
 # Dependencies for BUILD_TESTS
@@ -86,7 +101,7 @@ if (BUILD_TESTS)
     # Sets PYTHONINTERP_FOUND & PYTHON_EXECUTABLE
     find_package(PythonInterp REQUIRED)
 
-    find_package(PFUNIT REQUIRED)
+    find_package(PFUNIT 4.7 REQUIRED)
     add_library(pFUnit STATIC IMPORTED)
     set_property(TARGET pFUnit PROPERTY IMPORTED_LOCATION ${PFUNIT_LIBRARIES})
 
@@ -129,8 +144,12 @@ get_property(SRCS GLOBAL PROPERTY SRCS_LIST)
 
 # Compile library
 add_library(scone STATIC ${SRCS})
-target_compile_options(scone PRIVATE ${scone_extra_flags} )
-target_link_libraries(scone  ${LAPACK_LIBRARIES} )
+target_compile_options(scone PRIVATE ${scone_extra_flags})
+target_link_libraries(scone PUBLIC ${LAPACK_LIBRARIES})
+if(MPI)
+  add_compile_definitions(MPI)
+  target_link_libraries(scone PUBLIC MPI::MPI_Fortran)
+endif()
 
 if(LTO)
   set_property(TARGET scone PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
@@ -138,118 +157,77 @@ endif()
 
 ####################################################################################################
 # COMPILE SOLVERS
-add_executable(scone.out ./Apps/scone.f90 )
-target_link_libraries(scone.out scone )
+add_executable(scone.out ./Apps/scone.f90)
+target_link_libraries(scone.out scone)
 
 ####################################################################################################
 # COMPILE UNIT TESTS
 if(BUILD_TESTS)
+  enable_testing()
 
-  # Create directory in binary_dir for temporary preprocessed test files
-  file(MAKE_DIRECTORY ${PROJECT_BINARY_DIR}/generated)
-
-  # Create required test suites listing file
-  file(WRITE ${PROJECT_BINARY_DIR}/generated/testSuites.inc "")
-
-  include_directories(
-      ${PFUNIT_MOD}
-      )
-
-  # Preprocess collected test files from global property into variable
-  # Copy files to the build folder
-
-  set(PREP_UNIT_TESTS)
   get_property(UNIT_TESTS GLOBAL PROPERTY UNIT_TESTS_LIST)
 
+  # Make absolute paths relative to source directory
   foreach(_testPath IN LISTS UNIT_TESTS)
-    # OBTAIN EXTENSION
-    string(REGEX MATCH "\\.[a-zA-Z0-9]+$" extension ${_testPath})
-
-    # REMOVE EXTENSION
-    string(REGEX REPLACE "${extension}$" "" _testPath_temp ${_testPath})
-
-    # OBTAIN FILE NAME WITHOUT EXTENSION
-    string(REGEX MATCH "[a-zA-Z0-9_]+$" testName ${_testPath_temp})
-
-    # ADD RULE PREPROCESS ALL TEST FILES TO A SINGLE FOLDER IN BINARY_DIR
-    add_custom_command(
-       OUTPUT ${PROJECT_BINARY_DIR}/generated/${testName}${extension}
-       COMMAND ${PYTHON_EXECUTABLE} ${PFUNIT_PREPROC}/pFUnitParser.py ${_testPath}
-                                    ${PROJECT_BINARY_DIR}/generated/${testName}${extension}
-       DEPENDS pFUnit ${_testPath}
-       COMMENT "Preprocessing test ${testName}"
-       VERBATIM
-       )
-    # APPEND LIST OF ALL PREPROCESSED UNIT TEST FILES & ADD TEST SUITE TO testSuites.inc
-    set(PREP_UNIT_TESTS ${PREP_UNIT_TESTS} ${PROJECT_BINARY_DIR}/generated/${testName}${extension})
-    file(APPEND ${PROJECT_BINARY_DIR}/generated/testSuites.inc "ADD_TEST_SUITE(${testName}_suite)\n")
+    file(RELATIVE_PATH _testPath ${CMAKE_SOURCE_DIR} ${_testPath})
+    list(APPEND UNIT_TESTS_RELATIVE ${_testPath})
   endforeach()
 
-  add_executable(unitTests ${PFUNIT_INCLUDE_DIRS}/driver.F90  ${PREP_UNIT_TESTS})
-  target_link_libraries(unitTests pFUnit scone)
-  target_include_directories(unitTests PUBLIC ${PROJECT_BINARY_DIR}/generated )
+  if(MPI)
+    set(MAX_PES_OPTION MAX_PES 1)
+  else()
+    set(MAX_PES_OPTION "")
+  endif()
 
-  # Switch off warnings when compiling tests. Has some unused variables and invalid preprocessor
-  # directives
-  # Select GNU compiler and Build Robust Test Suite
-  set_target_properties(unitTests PROPERTIES COMPILE_FLAGS "-w -DGNU -DBUILD_ROBUST")
+  add_pfunit_ctest(unitTests
+    TEST_SOURCES ${UNIT_TESTS_RELATIVE}
+    LINK_LIBRARIES scone
+    ${MAX_PES_OPTION}
+    )
+
+  # Write unit tests to a subfolder in modFiles, to avoid potential concurrent writing
+  set_target_properties(unitTests PROPERTIES
+	  Fortran_MODULE_DIRECTORY ${CMAKE_Fortran_MODULE_DIRECTORY}/unitTests
+  )
+  
+  # Tells unit tests where to find SCONE files
+  target_include_directories(unitTests PRIVATE ${CMAKE_Fortran_MODULE_DIRECTORY})
+
+  # pFUnit may have a bug which causes a unused variable `class(Test), allocatable :: t` be
+  # present if the suite contains only a TestCase and its methods
+  # We need to suppress this warning for clarity
+  target_compile_options(unitTests PRIVATE "-Wno-unused-variable")
 
 ####################################################################################################
 # COMPILE INTEGRATION TESTS
 
-  # Create directory in binary_dir for temporary preprocessed test files
-  file(MAKE_DIRECTORY ${PROJECT_BINARY_DIR}/generatedInt)
-
-  # Create required test suites listing file
-  file(WRITE ${PROJECT_BINARY_DIR}/generatedInt/testSuites.inc "")
-
-  # Preprocess collected test files from global property into variable
-  # Copy files to the build folder
-
-  set(PREP_INTEGRATION_TESTS)
   get_property(INTEGRATION_TESTS GLOBAL PROPERTY INTEGRATION_TESTS_LIST)
 
+  # Make absolute paths relative to source directory
   foreach(_testPath IN LISTS INTEGRATION_TESTS)
-    # OBTAIN EXTENSION
-    string(REGEX MATCH "\\.[a-zA-Z0-9]+$" extension ${_testPath})
-
-    # REMOVE EXTENSION
-    string(REGEX REPLACE "${extension}$" "" _testPath_temp ${_testPath})
-
-    # OBTAIN FILE NAME WITHOUT EXTENSION
-    string(REGEX MATCH "[a-zA-Z0-9_]+$" testName ${_testPath_temp})
-
-    # ADD RULE PREPROCESS ALL TEST FILES TO A SINGLE FOLDER IN BINARY_DIR
-    add_custom_command(
-       OUTPUT ${PROJECT_BINARY_DIR}/generatedInt/${testName}${extension}
-       COMMAND ${PYTHON_EXECUTABLE} ${PFUNIT_PREPROC}/pFUnitParser.py ${_testPath}
-                                    ${PROJECT_BINARY_DIR}/generatedInt/${testName}${extension}
-       DEPENDS pFUnit ${_testPath}
-       COMMENT "Preprocessing test ${testName}"
-       VERBATIM
-       )
-    # APPEND LIST OF ALL PREPROCESSED UNIT TEST FILES & ADD TEST SUITE TO testSuites.inc
-    set(PREP_INTEGRATION_TESTS ${PREP_INTEGRATION_TESTS} ${PROJECT_BINARY_DIR}/generatedInt/${testName}${extension})
-    file(APPEND ${PROJECT_BINARY_DIR}/generatedInt/testSuites.inc "ADD_TEST_SUITE(${testName}_suite)\n")
+    file(RELATIVE_PATH _testPath ${CMAKE_SOURCE_DIR} ${_testPath})
+    list(APPEND INTEGRATION_TESTS_RELATIVE ${_testPath})
   endforeach()
 
+  add_pfunit_ctest(integrationTests
+    TEST_SOURCES ${INTEGRATION_TESTS_RELATIVE}
+    LINK_LIBRARIES scone
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    )
+  
+  # Write integration test files in a subfolder to avoid potential data race
+  set_target_properties(integrationTests PROPERTIES
+	  Fortran_MODULE_DIRECTORY ${CMAKE_Fortran_MODULE_DIRECTORY}/integrationTests
+  )
+	
+  # Tells integration tests where to find SCONE files
+  target_include_directories(integrationTests PRIVATE ${CMAKE_Fortran_MODULE_DIRECTORY})
 
-  add_executable(integrationTests ${PFUNIT_INCLUDE_DIRS}/driver.F90  ${PREP_INTEGRATION_TESTS})
-  target_link_libraries(integrationTests pFUnit scone)
-  target_include_directories(integrationTests PUBLIC ${PROJECT_BINARY_DIR}/generatedInt )
+  # pFUnit may have a bug which causes a unused variable `class(Test), allocatable :: t` be
+  # present if the suite contains only a TestCase and its methods
+  # We need to suppress this warning for clarity
+  target_compile_options(integrationTests PRIVATE "-Wno-unused-variable")
 
-
-  # Switch off warnings when compiling tests. Has some unused variables and invalid preprocessor
-  # directives
-  # Select GNU compiler and Build Robust Test Suite
-  set_target_properties(integrationTests PROPERTIES COMPILE_FLAGS "-w -DGNU -DBUILD_ROBUST")
-
-  ##################################################################################################
-  # Register the test suites with CMake
-  # NOTE: Integration tests must be run from source directory
-  enable_testing()
-  add_test(NAME Unit_Tests COMMAND unitTests)
-  add_test(NAME Integration_Tests COMMAND integrationTests WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 endif()
 
 ####################################################################################################
@@ -263,6 +241,7 @@ message(STATUS "  Link-time optimisation:     " ${LTO})
 message(STATUS "  Code coverage logging:      " ${COVERAGE})
 message(STATUS "  Extra runtime debug checks: " ${DEBUG})
 message(STATUS "  OpenMP parallelism:         " ${OPENMP})
+message(STATUS "  MPI parallelism:            " ${MPI})
 message(STATUS "  Fortran compiler:     " ${CMAKE_Fortran_COMPILER})
 message(STATUS "  Compiler version:     " ${CMAKE_Fortran_COMPILER_VERSION})
 message(STATUS "  OpenMP version:       " ${OpenMP_CXX_VERSION})

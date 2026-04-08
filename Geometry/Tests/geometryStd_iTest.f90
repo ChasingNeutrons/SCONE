@@ -7,7 +7,8 @@ module geometryStd_iTest
   use dictParser_func,   only : fileToDict
   use coord_class,       only : coordList
   use geometryStd_class, only : geometryStd
-  use pFUnit_mod
+  use materialMenu_mod,  only : mm_init => init
+  use funit
 
   implicit none
 
@@ -131,7 +132,7 @@ contains
     u = [ZERO, -ONE, ZERO]
     call coords % init(r, u)
 
-    ! Collosion movement
+    ! Collision movement
     maxDist = 1.0_defReal
     call geom % moveGlobal(coords, maxDist, event)
 
@@ -161,7 +162,7 @@ contains
     @assertEqual(idx, coords % matIdx)
     @assertEqual(0.26_defReal, maxDist, TOL)
 
-    !*** Normal Movment (easy case)
+    !*** Normal Movement (easy case)
     r = [-0.63_defReal, -0.63_defReal, 0.0_defReal]
     u = [ZERO, -ONE, ZERO]
     call coords % init(r, u)
@@ -293,6 +294,5 @@ contains
     @assertEqual(idxF, img3)
 
   end subroutine test_tilted_cylinder
-
 
 end module geometryStd_iTest

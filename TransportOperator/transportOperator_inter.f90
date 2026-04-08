@@ -2,22 +2,28 @@ module transportOperator_inter
 
   use numPrecision
   use universalVariables
-  use genericProcedures,          only : fatalError
+  use errors_mod,               only : fatalError
 
-  use particle_class,             only : particle
-  use particleDungeon_class,      only : particleDungeon
-  use dictionary_class,           only : dictionary
+  use particle_class,           only : particle
+  use particleDungeon_class,    only : particleDungeon
+  use dictionary_class,         only : dictionary
+
 
   ! Geometry interfaces
-  use geometryReg_mod,            only : gr_geomPtr => geomPtr
-  use geometry_inter,             only : geometry
+  use geometryReg_mod,          only : gr_geomPtr => geomPtr, &
+                                       gr_hasField => hasField, &
+                                       gr_fieldPtrName => fieldPtrName
+  use geometry_inter,           only : geometry
+  
+  use field_inter,              only : field
+  use pieceConstantField_inter, only : pieceConstantField, pieceConstantField_CptrCast
 
   ! Tally interface
-  use tallyAdmin_class,           only : tallyAdmin
+  use tallyAdmin_class,         only : tallyAdmin
 
   ! Nuclear data interfaces
-  use nuclearDataReg_mod,         only : ndReg_get => get
-  use nuclearDatabase_inter,      only : nuclearDatabase
+  use nuclearDataReg_mod,       only : ndReg_get => get
+  use nuclearDatabase_inter,    only : nuclearDatabase
 
 
 
@@ -41,6 +47,9 @@ module transportOperator_inter
   !! Customisable procedures or transport actions
   !!   transit(p, tally, thisCycle, nextCycle) -> implements movement from collision to collision
   !!
+  !! Procedures generic to transport operators:
+  !!   localConditions(p) -> obtains local conditions of temperature and density for use in transport
+  !!
   type, abstract, public :: transportOperator
     !! Nuclear Data block pointer -> public so it can be used by subclasses (protected member)
     class(nuclearDatabase), pointer :: xsData => null()
@@ -56,12 +65,15 @@ module transportOperator_inter
     procedure :: init
     procedure :: kill
 
+    ! Query for local conditions of temperature and density.
+    procedure, non_overridable :: localConditions
+
     ! Customisable deferred procedures
     procedure(transit), deferred :: transit
 
   end type transportOperator
 
-  ! Extandable procedures
+  ! Extendable procedures
   public :: init
   public :: kill
 
@@ -111,11 +123,37 @@ contains
     call self % transit(p, tally, thisCycle, nextCycle)
 
     ! Send history reports if particle died
-    if( p  % isDead) then
+    if (p  % isDead) then
       call tally % reportHist(p)
     end if
 
   end subroutine transport
+
+  !!
+  !! Queries local conditions of temperature and density from
+  !! the geometry registry. Updates the particle to carry this info.
+  !!
+  subroutine localConditions(self, p)
+    class(transportOperator), intent(in) :: self
+    class(particle), intent(inout)       :: p
+    class(field), pointer                :: genericField
+    class(pieceConstantField), pointer   :: pcField
+    
+    ! Temperature check
+    if (gr_hasField(nameTemperature)) then
+      genericField => gr_fieldPtrName(nameTemperature)
+      pcField => pieceConstantField_CptrCast(genericField)
+      p % T = pcField % at(p % coords)
+    end if
+
+    ! Density check
+    if (gr_hasField(nameDensity)) then
+      genericField => gr_fieldPtrName(nameDensity)
+      pcField => pieceConstantField_CptrCast(genericField)
+      p % rho = pcField % at(p % coords)
+    end if
+
+  end subroutine localConditions
 
   !!
   !! Initialise transport operator from dictionary and geometry

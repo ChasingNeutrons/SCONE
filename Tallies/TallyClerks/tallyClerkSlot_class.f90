@@ -3,7 +3,7 @@ module tallyClerkSlot_class
   use numPrecision
   use genericProcedures,      only : fatalError
   use dictionary_class,       only : dictionary
-  use particle_class,         only : particle
+  use particle_class,         only : particle, particleState
   use particleDungeon_class,  only : particleDungeon
   use tallyClerk_inter,       only : tallyClerk, setMemAddress_super => setMemAddress, &
                                                  setName_super       => setName, &
@@ -45,9 +45,11 @@ module tallyClerkSlot_class
     procedure :: reportOutColl
     procedure :: reportPath
     procedure :: reportTrans
+    procedure :: reportSpawn
     procedure :: reportHist
     procedure :: reportCycleStart
     procedure :: reportCycleEnd
+    procedure :: closeCycle
     procedure :: isConverged
 
     ! Output procedures
@@ -230,6 +232,24 @@ contains
   end subroutine reportTrans
 
   !!
+  !! Process particle creation report
+  !!
+  !! See tallyClerk_inter for details
+  !!
+  subroutine reportSpawn(self, MT, pOld, pNew, xsData, mem)
+    class(tallyClerkSlot), intent(inout)  :: self
+    integer(shortInt), intent(in)         :: MT
+    class(particle), intent(in)           :: pOld
+    class(particleState), intent(in)      :: pNew
+    class(nuclearDatabase), intent(inout) :: xsData
+    type(scoreMemory), intent(inout)      :: mem
+
+    ! Pass call to instance in the slot
+    call self % slot % reportSpawn(MT, pOld, pNew, xsData, mem)
+
+  end subroutine reportSpawn
+
+  !!
   !! Process history report
   !!
   !! See tallyClerk_inter for details
@@ -274,6 +294,21 @@ contains
     call self % slot % reportCycleEnd(end, mem)
 
   end subroutine reportCycleEnd
+
+  !!
+  !! Close cycle
+  !!
+  !! See tallyClerk_inter for details
+  !!
+  subroutine closeCycle(self, end, mem)
+    class(tallyClerkSlot), intent(inout) :: self
+    class(particleDungeon), intent(in)   :: end
+    type(scoreMemory), intent(inout)     :: mem
+
+    ! Pass call to instance in the slot
+    call self % slot % closeCycle(end, mem)
+
+  end subroutine closeCycle
 
   !!
   !! Perform convergance check in the Clerk

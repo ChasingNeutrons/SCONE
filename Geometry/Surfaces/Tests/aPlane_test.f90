@@ -3,7 +3,7 @@ module aPlane_test
   use universalVariables
   use dictionary_class,  only : dictionary
   use aPlane_class,      only : aPlane
-  use pfUnit_mod
+  use funit
 
   implicit none
 
@@ -72,7 +72,6 @@ contains
     type(dirParam), intent(in) :: dir
     type(test_aPlane)        :: tst
     type(dictionary)      :: dict
-    character(nameLen)    :: type
 
     ! Start dictionary
     ! Build surface
@@ -98,6 +97,7 @@ contains
 
       case default
         print *, "Should not happen. Wrong direction in testcase constructor"
+        error stop
 
     end select
 
@@ -200,7 +200,6 @@ contains
 @Test(cases=[1,2,3])
   subroutine testHalfspace(this)
     class(test_aPlane), intent(inout) :: this
-    integer(shortInt)                 :: a, p1, p2
     real(defReal), dimension(3)       :: r, u, u2
     real(defReal)                     :: eps
 
@@ -243,7 +242,6 @@ contains
 @Test(cases=[1, 2, 3])
   subroutine testDistance(this)
     class(test_aPlane), intent(inout) :: this
-    integer(shortInt)                   :: a, p1, p2
     real(defReal), dimension(3)         :: r, u, u2
     real(defReal)                       :: ref
     real(defReal), parameter :: SQRT3 = sqrt(3.0_defReal)
@@ -285,5 +283,23 @@ contains
     @assertEqual(INF, this % surf % distance(r, u2))
 
   end subroutine testDistance
+  
+  !!
+  !! Test producing the normal vector
+  !!
+@Test(cases=[1, 2, 3])
+  subroutine testNormal(this)
+    class(test_aPlane), intent(inout) :: this
+    real(defReal), dimension(3)       :: n
+    real(defReal), dimension(3)       :: r, u
+
+    r = [99.92_defReal, -6.0_defReal, 4.0_defReal]
+    u = [100, 200, 400]
+
+    n = this % surf % normal(r, u)
+
+    @assertEqual(ONE, n(this % axis))
+
+  end subroutine testNormal
 
 end module aPlane_test

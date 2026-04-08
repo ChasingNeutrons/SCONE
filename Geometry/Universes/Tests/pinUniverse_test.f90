@@ -9,7 +9,7 @@ module pinUniverse_test
   use surfaceShelf_class, only : surfaceShelf
   use cellShelf_class,    only : cellShelf
   use pinUniverse_class,  only : pinUniverse, MOVING_IN, MOVING_OUT
-  use pfUnit_mod
+  use funit
   implicit none
 
   ! Parameters
@@ -70,7 +70,6 @@ contains
   !!
 @Test
   subroutine test_misc()
-    real(defReal), dimension(3,3) :: mat
 
     ! Get id
     @assertEqual(7, uni % id())
@@ -279,5 +278,39 @@ contains
 
   end subroutine test_edgeCases
 
+  !!
+  !! Test getting a normal
+  !!
+@Test
+  subroutine test_normal()
+    type(coord)       :: pos
+    integer(shortInt) :: idx
+    real(defReal), dimension(3) :: n
+
+    pos % r   = [0.0_defReal, -1.5_defReal, 0.0_defReal]
+    pos % dir = [ZERO, ONE, ZERO]
+    pos % localId = 1
+
+    ! Surface should be innermost annulus
+    idx = MOVING_IN
+    n = uni % getNormal(idx, pos)
+    @assertEqual([0, -1, 0], n)
+    
+    ! Surface should be second innermost annulus - results will be identical
+    pos % r   = [0.0_defReal, -1.8_defReal, 0.0_defReal]
+    pos % localId = 2
+    idx = MOVING_OUT
+    n = uni % getNormal(idx, pos)
+    @assertEqual([0, -1, 0], n)
+
+    ! What about outermost?
+    pos % r   = [9999.9_defReal, 0.0_defReal, 0.0_defReal]
+    pos % dir = [ZERO, ONE, ZERO]
+    pos % localId = 3
+    idx = MOVING_OUT
+    n = uni % getNormal(idx, pos)
+    @assertEqual([1, 0, 0], n)
+
+  end subroutine test_normal
 
 end module pinUniverse_test

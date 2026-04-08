@@ -4,13 +4,12 @@ module mgXsClerk_test
   use endfConstants
   use genericProcedures,         only : numToChar
   use mgXsClerk_class,           only : mgXsClerk
-  use particle_class,            only : particle
-  use particleDungeon_class,     only : particleDungeon
+  use particle_class,            only : particle, particleState
   use dictionary_class,          only : dictionary
   use scoreMemory_class,         only : scoreMemory
   use testNeutronDatabase_class, only : testNeutronDatabase
   use outputFile_class,          only : outputFile
-  use pFUnit_mod
+  use funit
 
   implicit none
 
@@ -75,7 +74,7 @@ contains
 
     ! Build test neutronDatabase
     call this % nucData % build(ONE, captureXS = 2.0_defReal, &
-                                fissionXS = 1.5_defReal, nuFissionXS = 3.0_defReal)
+                                fissionXS = 1.5_defReal, nuFissionXS = 3.0_defReal, kappaXS = 300.0_defReal)
 
   end subroutine setUp
 
@@ -101,35 +100,37 @@ contains
 @Test
   subroutine testScoring_clerk1(this)
     class(test_mgXsClerk), intent(inout) :: this
-    character(:),allocatable             :: case
     type(scoreMemory)                    :: mem
     type(particle)                       :: p
-    type(particleDungeon)                :: pit
+    type(particleState)                  :: pFiss
     type(outputFile)                     :: out
     real(defReal), dimension(:,:), allocatable :: fiss, capt, transFL, transOS, &
-                                                  nu, chi, P0, P1, P2, P3, P4,  &
-                                                  P5, P6, P7, prod
+                                                  nu, chi, kappa, P0, P1, P2, P3, &
+                                                  P4, P5, P6, P7, prod
     real(defReal), parameter :: TOL = 1.0E-9
 
     ! Configure memory
     call mem % init(1000_longInt, 1)
     call this % clerk_test1 % setMemAddress(1_longInt)
 
-    ! Configure particle dungeon
-    call pit % init(3)
-
+    ! Report fission particles
     p % isMG = .false.
     p % w    = 0.5_defReal
     p % E    = 0.3_defReal
     call p % setMatIdx(2)
-    call pit % detain(p)
+
+    ! Scoring
+    pFiss = p
+    call this % clerk_test1 % reportSpawn(N_FISSION, p, pFiss, this % nucData, mem)
 
     p % E = 3.0_defReal
-    call pit % detain(p)
+
+    ! Scoring
+    pFiss = p
+    call this % clerk_test1 % reportSpawn(N_FISSION, p, pFiss, this % nucData, mem)
 
     ! Scoring
     call this % clerk_test1 % reportInColl(p, this % nucData, mem, .false.)
-    call this % clerk_test1 % reportCycleEnd(pit, mem)
 
     p % preCollision % wgt = 0.2_defReal
     p % preCollision % E   = 3.0_defReal
@@ -138,10 +139,11 @@ contains
     p % E = 0.1_defReal
 
     call this % clerk_test1 % reportOutColl(p, N_2N, 0.75_defReal, this % nucData, mem)
+    call mem % reduceBins()
     call mem % closeCycle(ONE)
 
     ! Process and get results
-    call this % clerk_test1 % processRes(mem, capt, fiss, transFL, transOS, nu, chi, P0, P1, prod)
+    call this % clerk_test1 % processRes(mem, capt, fiss, transFL, transOS, nu, chi, kappa, P0, P1, prod)
     call this % clerk_test1 % processPN(mem, P2, P3, P4, P5, P6, P7)
 
     ! Verify results of scoring
@@ -149,6 +151,7 @@ contains
     @assertEqual([ZERO, ZERO, 1.5_defReal, ZERO], fiss(1,:), TOL, 'Fission XS' )
     @assertEqual([ZERO, ZERO, TWO, ZERO], nu(1,:), TOL, 'NuFission XS' )
     @assertEqual([ZERO, ZERO, HALF, HALF], chi(1,:), TOL, 'Chi' )
+    @assertEqual([ZERO, ZERO, 300.0_defReal, ZERO], kappa(1,:), TOL, 'Kappa XS' )
     @assertEqual([ZERO, ZERO, 4.0_defReal, ZERO], transOS(1,:), TOL, 'Transport XS O.S.' )
     @assertEqual([ZERO, ZERO, 5.5_defReal, ZERO], transFL(1,:), TOL, 'Transport XS F.L.' )
     @assertEqual([ZERO, ZERO, ZERO, ZERO, ZERO, TWO, ZERO, ZERO], P0(1,:), TOL, 'P0' )
@@ -163,7 +166,7 @@ contains
     @assertEqual([ZERO, ZERO, ZERO, ZERO, ZERO, -0.0683670044_defReal, ZERO, ZERO], P7(1,:), TOL, 'P7' )
 
     ! Test getting size
-    @assertEqual(100, this % clerk_test1 % getSize(),'Test getSize():')
+    @assertEqual(104, this % clerk_test1 % getSize(),'Test getSize():')
 
     ! Test correctness of output calls
     call out % init('dummyPrinter', fatalErrors = .false.)
@@ -178,33 +181,36 @@ contains
 @Test
   subroutine testScoring_clerk2(this)
     class(test_mgXsClerk), intent(inout) :: this
-    character(:),allocatable             :: case
     type(scoreMemory)                    :: mem
     type(particle)                       :: p
-    type(particleDungeon)                :: pit
+    type(particleState)                  :: pFiss
     type(outputFile)                     :: out
     real(defReal), dimension(:,:), allocatable :: fiss, capt, transFL, transOS, &
-                                                  nu, chi, P0, P1, prod
+                                                  nu, chi, kappa, P0, P1, prod
     real(defReal), parameter :: TOL = 1.0E-9
 
     ! Configure memory
     call mem % init(1000_longInt, 1)
     call this % clerk_test2 % setMemAddress(1_longInt)
 
-    ! Configure particle dungeon
-    call pit % init(3)
-
+    ! Report fission particles
     p % isMG = .false.
     p % w    = 0.5_defReal
     p % E    = 3.0_defReal
-    call pit % detain(p)
+    call p % setMatIdx(2)
+
+    ! Scoring
+    pFiss = p
+    call this % clerk_test2 % reportSpawn(N_FISSION, p, pFiss, this % nucData, mem)
 
     p % E = 0.3_defReal
-    call pit % detain(p)
+
+    ! Scoring
+    pFiss = p
+    call this % clerk_test2 % reportSpawn(N_FISSION, p, pFiss, this % nucData, mem)
 
     ! Scoring
     call this % clerk_test2 % reportInColl(p, this % nucData, mem, .false.)
-    call this % clerk_test2 % reportCycleEnd(pit, mem)
 
     p % preCollision % wgt = 0.2_defReal
     p % preCollision % E   = 0.3_defReal
@@ -212,24 +218,26 @@ contains
     p % E = 1.1_defReal
 
     call this % clerk_test2 % reportOutColl(p, N_2N, 0.75_defReal, this % nucData, mem)
+    call mem % reduceBins()
     call mem % closeCycle(ONE)
 
     ! Process and get results
-    call this % clerk_test2 % processRes(mem, capt, fiss, transFL, transOS, nu, chi, P0, P1, prod)
+    call this % clerk_test2 % processRes(mem, capt, fiss, transFL, transOS, nu, chi, kappa, P0, P1, prod)
 
     ! Verify results of scoring
     @assertEqual([ZERO, ZERO, TWO], capt(1,:), TOL, 'Capture XS' )
     @assertEqual([ZERO, ZERO, 1.5_defReal], fiss(1,:), TOL, 'Fission XS' )
     @assertEqual([ZERO, ZERO, TWO], nu(1,:), TOL, 'NuFission XS' )
     @assertEqual([HALF, ZERO, HALF], chi(1,:), TOL, 'Chi' )
+    @assertEqual([ZERO, ZERO, 300.0_defReal], kappa(1,:), TOL, 'Kappa XS' )
     @assertEqual([ZERO, ZERO, 4.0_defReal], transOS(1,:), TOL, 'Transport XS O.S.' )
     @assertEqual([ZERO, ZERO, 5.5_defReal], transFL(1,:), TOL, 'Transport XS F.L.' )
-      @assertEqual([ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, TWO, ZERO], P0(1,:), TOL, 'P0' )
+    @assertEqual([ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, TWO, ZERO], P0(1,:), TOL, 'P0' )
     @assertEqual([ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, 1.5_defReal, ZERO], P1(1,:), TOL, 'P1' )
     @assertEqual([ONE, ONE, ONE, ONE, ONE, ONE, ONE, TWO, ONE], prod(1,:), TOL, 'prod' )
 
     ! Test getting size
-    @assertEqual(48, this % clerk_test2 % getSize(),'Test getSize():')
+    @assertEqual(51, this % clerk_test2 % getSize(),'Test getSize():')
 
     ! Test correctness of output calls
     call out % init('dummyPrinter', fatalErrors = .false.)

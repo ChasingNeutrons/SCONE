@@ -5,7 +5,7 @@ module simpleCell_test
   use dictParser_func,    only : charToDict
   use surfaceShelf_class, only : surfaceShelf
   use simpleCell_class,   only : simpleCell
-  use pFUnit_mod
+  use funit
 
   implicit none
 
@@ -16,8 +16,9 @@ module simpleCell_test
   & surf3 { id 99; type yPlane; y0 0.0;}"
 
   ! Note that fill is not really needed to build a cell. It is used by cellShelf only
+  ! Also note that the init procedure does not actually use the type, so it is left out.
   character(*), parameter :: CELL_DEF = "&
-  & id 2; type simpleCell; surfaces (-13 4 99 ); filltype outside; "
+  & id 2; surfaces (-13 4 99 ); filltype outside; "
 
 
   ! Variables
@@ -128,5 +129,32 @@ contains
     @assertEqual(idx_ref, idx)
 
   end subroutine test_distance
+  
+  !!
+  !! Test getting a normal
+  !!
+@Test
+  subroutine test_normal()
+    real(defReal), dimension(3) :: r, u
+    integer(shortInt)           :: idx
+    real(defReal), dimension(3) :: n
+
+    ! Y-Plane normal
+    r = [0.3_defReal, 0.4_defReal, 0.0_defReal]
+    u = [-ONE, ZERO, ZERO]
+    idx = surfs % getIdx(99)
+
+    n = cell % getNormal(idx, r, u)
+    @assertEqual([0, 1, 0], n)
+    
+    ! Sphere normal
+    r = [0.0_defReal, 0.0_defReal, -2.0_defReal]
+    u = [-ONE, ZERO, ZERO]
+    idx = surfs % getIdx(13)
+
+    n = cell % getNormal(idx, r, u)
+    @assertEqual([0, 0, -1], n)
+
+  end subroutine test_normal
 
 end module simpleCell_test

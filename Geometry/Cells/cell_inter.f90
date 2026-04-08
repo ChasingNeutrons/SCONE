@@ -3,6 +3,7 @@ module cell_inter
   use numPrecision
   use genericProcedures,  only : fatalError, numToChar
   use dictionary_class,   only : dictionary
+  use surface_inter,      only : surface
   use surfaceShelf_class, only : surfaceShelf
 
   implicit none
@@ -10,11 +11,25 @@ module cell_inter
 
   ! Extendable procedures
   public :: kill
+  
+
+  !!
+  !! Type to hold pointer to a surface together with a halfspace information
+  !!
+  !! Public Members:
+  !!   surfIdx -> Index of the surface (+ve if +ve halspace is used to define the
+  !!     cell, -ve otherwise)
+  !!   ptr -> Pointer to a surface
+  !!
+  type, public :: surfInfo
+    integer(shortInt)       :: surfIdx = 0
+    class(surface), pointer :: ptr => null()
+  end type surfInfo
 
   !!
   !! Abstract interface for all cells
   !!
-  !! Cell is intendet to represent a volume of space. It is not intended to be
+  !! Cell is intended to represent a volume of space. It is not intended to be
   !! a independent entity, but rather to be used as a component of universes.
   !!
   !! Private Members:
@@ -25,20 +40,21 @@ module cell_inter
   !!   inside   -> Return true is a given position is cntained inside the cell
   !!   distance -> Assuming the point is inside the cell, calculate distance to the boundary
   !!     and give surfIdx for the surface that will be crossed
-  !!  setId     -> Set ID of a cell
-  !!  id        -> Return id of a cell
-  !!  kill      -> Return to uninitialised state
+  !!   setId    -> Set ID of a cell
+  !!   id       -> Return id of a cell
+  !!   kill     -> Return to uninitialised state
   !!
   type, public, abstract :: cell
     private
     integer(shortInt) :: cellId = 0
   contains
-    procedure(init), deferred     :: init
-    procedure(inside), deferred   :: inside
-    procedure(distance), deferred :: distance
-    procedure, non_overridable    :: setId
-    procedure, non_overridable    :: id
-    procedure                     :: kill
+    procedure(init), deferred      :: init
+    procedure(inside), deferred    :: inside
+    procedure(distance), deferred  :: distance
+    procedure(getNormal), deferred :: getNormal
+    procedure, non_overridable     :: setId
+    procedure, non_overridable     :: id
+    procedure                      :: kill
   end type cell
 
   abstract interface
@@ -86,7 +102,7 @@ module cell_inter
     !! Args:
     !!   d [out]       -> Distance to the boundary
     !!   surfIdx [out] -> Index of a surface that will be crossed. If the surface is not defined on
-    !!     the surface shelf its value should be -ve. If no surface is hit return 0. 
+    !!     the surface shelf its value should be -ve. If no surface is hit return 0.
     !!   r [in]        -> Position
     !!   u [in]        -> ormalised direction (norm2(u) = 1.0)
     !!
@@ -102,6 +118,31 @@ module cell_inter
       real(defReal), dimension(3), intent(in) :: r
       real(defReal), dimension(3), intent(in) :: u
     end subroutine distance
+    
+    !!
+    !! Return normal of provided surface at provided point
+    !!
+    !! Args:
+    !!   surfIdx [in] -> Index of the surface to be crossed. If the surface is not defined on
+    !!     the surface shelf its value should be -ve.
+    !!   r [in]        -> Position
+    !!   u [in]        -> normalised direction (norm2(u) = 1.0)
+    !!
+    !! Output:
+    !!   normal -> outward normal from the given surface
+    !!
+    !! Errors:
+    !!   Throw a fatal error if the surfIdx is not a part of the cell
+    !!
+    function getNormal(self, surfIdx, r, u) result(normal)
+      import :: cell, defReal, shortInt
+      class(cell), intent(in)                 :: self
+      integer(shortInt), intent(in)           :: surfIdx
+      real(defReal), dimension(3), intent(in) :: r
+      real(defReal), dimension(3), intent(in) :: u
+      real(defReal), dimension(3)             :: normal
+
+    end function getNormal
 
   end interface
 
