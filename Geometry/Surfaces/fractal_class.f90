@@ -49,6 +49,7 @@ module fractal_class
     procedure :: boundingBox
     procedure :: evaluate
     procedure :: distance
+    procedure :: normal
     procedure :: going
     procedure :: kill
   end type fractal
@@ -85,7 +86,7 @@ contains
 
     ! Load id
     call dict % get(id,'id')
-    if (id <= 0) call fatalError(Here, 'ID must be <=0. Is: '//numToChar(id))
+    if (id <= 0) call fatalError(Here, 'ID must be >0. Is: '//numToChar(id))
     call self % setID(id)
 
     ! Load origin
@@ -176,6 +177,7 @@ contains
   !!
   !! Return distance to the surface
   !! Not defined for the fractal surface which should only be used with delta tracking.
+  !! Attempt to use at own risk!
   !!
   !! See surface_inter for details
   !!
@@ -190,8 +192,24 @@ contains
   end function distance
 
   !!
+  !! Return normal to the surface given a point.
+  !! Not defined for the fractal surface which should only be used with delta tracking.
+  !! Attempt to use at own risk!
+  !!
+  pure function normal(self, r, u) result(n)
+    class(fractal), intent(in)              :: self
+    real(defReal), dimension(3), intent(in) :: r
+    real(defReal), dimension(3), intent(in) :: u
+    real(defReal), dimension(3)             :: n
+
+    n = [INF, INF, INF]
+
+  end function normal
+
+  !!
   !! Returns TRUE if particle is going into +ve halfspace
   !! Not defined for the fractal surface which should only be used with delta tracking.
+  !! Attempt to use at own risk!
   !!
   !! See surface_inter for details
   !!
