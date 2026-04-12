@@ -10,24 +10,54 @@ module fractal_class
   private
 
   !!
-  !! Fractal surface
+  !! Surface using the equation for a complex quadratic polynomial:
+  !!   f(p) = p^2 + q
+  !! where p and q are complex numbers. This produces a fractal from the Julia set.
   !!
+  !! A complex number, p, is part of the set if, on plugging that number into the
+  !! governing equation ad infinitum, it stays bounded, rather than diverging to 
+  !! infinity.
+  !!
+  !! To make a surface out of this, we interpret complex p as a point in space:
+  !!   p = (x - x0) + i*(y - y0)
+  !! where x0 and y0 are the chosen origin.
+  !! Then we plug this into the governing equation for some number of iterations,
+  !! checking whether the answer's magnitude exceeds some limit R after a chosen
+  !! number of iterations
+  !!
+  !! This requires inputting a value of q, a value of R, and a maximum number
+  !! of iterations. Optionally, one can also include an origin and a scaling
+  !! factor, to make the fractal bigger or smaller.
+  !!
+  !! Maybe it could make a good assembly geometry?
+  !!
+  !! Limitations:
+  !! - 2D only
+  !! - no distance-to-surface, so cannot be used with surface tracking
+  !! - no normal
+  !! - no boundary conditions
   !!
   !! Sample Dictionary Input:
-  !!   aab { type fractal; id 92; origin (0.0 0.0 9.0); 
-  !!         c (1.0 -3.0 ); it 20; tol 1E-6; limit 3; }
+  !!   aab { type fractal; 
+  !!         id 92; 
+  !!         origin (0.0 0.0 9.0); 
+  !!         q (1.0 -3.0 ); 
+  !!         maxIt 20; 
+  !!         tol 1E-6; 
+  !!         limit 3; 
+  !!       }
   !!
   !! Boundary Conditions:
   !!   Does not support boundary conditions.
   !!
   !! Private Members:
-  !!   origin -> poosition of the middle of the box
-  !!   halfwidth -> Halfwidths (half-length) of the box in each direction (must be > 0.0)
-  !!   BC -> Boundary conditions - not supported
-  !!   limit -> if exceeded, iterations terminate
-  !!   tolerance -> if absolute value is less, iterations terminate
-  !!   maxIt -> maximum number of iterations to termination
-  !!   c -> complex parameter, determining the julia set
+  !!   origin -> position of the middle of the fractal
+  !!   limit -> value which, if exceeded, iterations terminate and a given
+  !!            point is outside the surface
+  !!   maxIt -> maximum number of iterations to termination and inclusion
+  !!            inside the surface
+  !!   q -> complex parameter, determining the Julia set and shape of the surface
+  !!   scale -> parameter to stretch/shrink the fractal by
   !!
   !! Interface:
   !!   surface interface
@@ -35,12 +65,11 @@ module fractal_class
   type, public, extends(surface) :: fractal
     private
     real(defReal), dimension(3)     :: origin     = ZERO
-    real(defReal)                   :: limit      = 2.0_defReal
-    real(defReal)                   :: tolerance  = 1.0E-3
-    complex(defReal)                :: c          = ZERO
+    real(defReal)                   :: limit      = TWO
+    real(defReal)                   :: qReal      = ZERO
+    real(defReal)                   :: qImag      = ZERO
     real(defReal)                   :: scale      = ONE
     integer(shortInt)               :: maxIt      = 20
-    integer(shortInt), dimension(6) :: BC = VACUUM_BC
 
   contains
     ! Superclass procedures
@@ -96,22 +125,18 @@ contains
     self % origin = temp
 
     ! Load complex parameter
-    call dict % get(temp,'c')
+    call dict % get(temp,'q')
     N = size(temp)
-    if (N /= 2) call fatalError(Here,'c must have size 2. Has: '//numToChar(N))
-    self % c % re = temp(1)
-    self % c % im = temp(2)
+    if (N /= 2) call fatalError(Here,'q must have size 2. Has: '//numToChar(N))
+    self % qReal = temp(1)
+    self % qImag = temp(2)
 
     ! Load maximum number of iterations
     call dict % getOrDefault(self % maxIt, 'it', 20)
     if (self % maxIt < 1) call fatalError(Here,'it must have a value greater than 0')
     
-    ! Load tolerance
-    call dict % getOrDefault(self % tolerance, 'tol', 1.0E-3_defReal)
-    if (self % tolerance < ZERO) call fatalError(Here,'tolerance must have a value greater than 0')
-    
     ! Load overpass value - terminate iterations if this value is exceeded
-    call dict % getOrDefault(self % limit, 'limit', 2.0_defReal)
+    call dict % getOrDefault(self % limit, 'limit', TWO)
     if (self % limit < ZERO) call fatalError(Here,'limit must have a value greater than zero')
 
     ! Load scale value to make the fractal bigger without changing its shape
@@ -123,19 +148,27 @@ contains
   !!
   !! Return axis-aligned bounding box for the surface
   !!
+  !! Not done for the fractal due to the difficulty of
+  !! determining accurate bounds.
+  !!
+  !! Not directly required for transport
+  !!
   !! See surface_inter for details
   !!
   pure function boundingBox(self) result(aabb)
     class(fractal), intent(in)  :: self
     real(defReal), dimension(6) :: aabb
 
-    aabb(1:3) = self % origin - INF
-    aabb(4:6) = self % origin + INF
+    aabb(1:3) = -INF
+    aabb(4:6) = INF
 
   end function boundingBox
 
   !!
   !! Evaluate surface expression c = F(r)
+  !!
+  !! If c > 0, particle is outside the surface
+  !! If c < 0, particle is inside the surface
   !!
   !! See surface_inter for details
   !!
@@ -147,7 +180,7 @@ contains
     real(defReal)                           :: x, y, xtemp, r2
     integer(shortInt)                       :: i
 
-    ! Move to origin-frame and evaluate
+    ! Move to origin-frame
     rb = (r - self % origin) * self % scale
 
     x = rb(1)
@@ -155,12 +188,15 @@ contains
     r2 = self % limit * self % limit
 
     ! Recursively evaluate the surface equation
+    ! f(x,y) = (x + iy)^2 + c
+    ! Compute real and imaginary part and check
+    ! that the magnitude hasn't exceeded the limit
     i = 0
     do while(i < self % maxIt .and. x*x + y*y < r2)
 
       xtemp = x*x - y*y
-      y = 2 * x * y + self % c % im
-      x = xtemp + self % c % re
+      y = 2 * x * y + self % qImag
+      x = xtemp + self % qReal
 
       i = i + 1
 
@@ -234,9 +270,9 @@ contains
 
     ! Local
     self % origin = ZERO
-    self % tolerance = ZERO
-    self % limit = 2.0_defReal
-    self % c = ZERO
+    self % limit = TWO
+    self % qReal = ZERO
+    self % qImag = ZERO
     self % maxIt = 20
 
   end subroutine kill

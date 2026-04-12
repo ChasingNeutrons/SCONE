@@ -3,7 +3,7 @@
 !
 type eigenPhysicsPackage;
 
-pop      100000;
+pop      10000;
 active   500;
 inactive 20;
 XSdata   ceData;
@@ -21,9 +21,6 @@ inactiveTally {
               }
 
 activeTally  {
-                !norm totalFlx;
-                !normVal 1.0;
-                !totalFlx {type collisionClerk; response (flx); flx {type fluxResponse;} }
                 flx {type collisionClerk; response (flx); 
                           flx {type fluxResponse;}
                           map {type multiMap;
@@ -43,8 +40,7 @@ geometry {
     surfaces
     {
       squareBound { id 1; type box; origin ( 0.0  0.0  0.0); halfwidth (25 25 10.0); }
-      !frac { id 2; type fractal; origin (0.0 0.0 0.0); c (-0.4 0.6); it 20; limit 4.0;}
-      frac { id 2; type fractal; origin (0.0 0.0 0.0); c (0.35 0.35); it 1000; limit 5.0; tol 1.0E-2; scale 0.05;}
+      frac { id 2; type fractal; origin (0.0 0.0 0.0); q (0.35 0.35); it 1000; limit 5.0; scale 0.05;}
     }
 
 
@@ -95,21 +91,18 @@ materials {
     coolant {
       temp       273;
       composition {
-      1001.03    6.67572E-002;
-      8016.03    3.33786E-002;
+      1001.00    0.0497;
+      8016.00    0.0249;
       }
-      moder { 1001.03 (lwj3.00); }
+      moder { 1001.03 (h-h2o.40); }
     }
 
     fuel {
       temp 273;
       composition {
-      !92235.03 xxx
-      !92238.03 xxx
-      !8016.03  xxx
-      92235.03  5.67505E-4;
-      92238.03  2.22265E-002;
-       8016.03  4.55881E-002; 
+      92235.00  0.000823;
+      92238.00  0.022678;
+       8016.00  0.0488; 
       }
     }
 
